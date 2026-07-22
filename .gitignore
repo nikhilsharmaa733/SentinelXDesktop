@@ -1,0 +1,13 @@
+.gradle/
+build/
+*.iml
+.idea/workspace.xml
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.kotlin/
+
+# Never commit a real vault or archive. Test fixtures live in src/test/resources
+# and must contain synthetic data only.
+*.sxv
+!src/test/resources/**/*.sxv

@@ -1,0 +1,53 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
+plugins {
+    kotlin("jvm") version "2.0.21"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+    id("org.jetbrains.compose") version "1.7.3"
+}
+
+group = "com.nikhil.sentinelx.desktop"
+version = "1.0.0"
+
+// No jvmToolchain() here on purpose. Requesting a specific toolchain makes Gradle
+// hunt for that exact JDK and fail if it is absent — this machine has only the
+// JetBrains Runtime 21 bundled with Android Studio, no system JDK. Letting the
+// build use the daemon JVM keeps it working with what is actually installed.
+// jpackage needs 17+, so 21 is fine.
+
+dependencies {
+    implementation(compose.desktop.currentOs)
+    implementation(compose.material3)
+    implementation(compose.materialIconsExtended)
+
+    // Same Gson the Android app serialises MasterBackup with. The archive payload
+    // is matched field-for-field, so the JSON library must behave identically.
+    implementation("com.google.code.gson:gson:2.10.1")
+
+    // Argon2id for the LOCAL vault key. Bouncy Castle is pure Java — deliberately
+    // chosen over argon2-jvm, which ships native binaries that would complicate
+    // packaging for Windows. The .sxv format keeps PBKDF2 (see SxvCrypto).
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
+}
+
+compose.desktop {
+    application {
+        mainClass = "com.nikhil.sentinelx.desktop.MainKt"
+
+        nativeDistributions {
+            // Msi is produced only when jpackage runs ON Windows; Deb only on Linux.
+            // Listing both is harmless — each host builds the one it can.
+            targetFormats(TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "SentinelX"
+            packageVersion = "1.0.0"
+            description = "Offline personal vault"
+            vendor = "Nikhil"
+        }
+    }
+}

@@ -12,6 +12,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -19,6 +28,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
+import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
+import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
+import com.nikhil.sentinelx.desktop.ui.components.CommandPalette
+import com.nikhil.sentinelx.desktop.ui.components.GemCard
+import com.nikhil.sentinelx.desktop.ui.components.Pill
+import com.nikhil.sentinelx.desktop.ui.components.buildIndex
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
 import com.nikhil.sentinelx.desktop.ui.panes.ChroniclesPane
 import com.nikhil.sentinelx.desktop.ui.panes.LedgerPane
@@ -39,7 +54,22 @@ import java.io.File
  */
 @Composable
 fun AppShell(state: AppState) {
-    Row(Modifier.fillMaxSize().background(BackgroundDeep)) {
+    var paletteOpen by remember { mutableStateOf(false) }
+    val shellFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { shellFocus.requestFocus() }
+
+    // Ctrl+K anywhere opens global search. Handled at the shell so it works no
+    // matter which pane holds focus.
+    Row(
+        Modifier.fillMaxSize().background(BackgroundDeep)
+            .focusRequester(shellFocus)
+            .focusable()
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown && e.isCtrlPressed && e.key == Key.K) {
+                    paletteOpen = true; true
+                } else false
+            }
+    ) {
         Sidebar(state)
         Box(Modifier.weight(1f).fillMaxHeight()) {
             when (state.section) {
@@ -51,6 +81,15 @@ fun AppShell(state: AppState) {
                 Section.LEDGER -> LedgerPane(state)
             }
         }
+    }
+
+    if (paletteOpen) {
+        val index = remember(state.backup) { buildIndex(state.backup) }
+        CommandPalette(
+            index = index,
+            onDismiss = { paletteOpen = false },
+            onNavigate = { state.section = it }
+        )
     }
 }
 
@@ -321,6 +360,10 @@ private fun chooseSxvFile(): File? {
 @Composable
 private fun OverviewPane(state: AppState) {
     val b = state.backup
+    val expiries = remember(b.artifacts) { ExpiryScan.scan(b.artifacts) }
+    val health = remember(b.logins) { PasswordAudit.score(b.logins) }
+    val findings = remember(b.logins) { PasswordAudit.run(b.logins) }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(36.dp)
     ) {
@@ -344,7 +387,6 @@ private fun OverviewPane(state: AppState) {
             Triple("Accounts", b.accounts.size, IncomeGreen),
             Triple("Ledger rows", b.ledger.size, AmberWarn)
         )
-
         tiles.chunked(3).forEach { row ->
             Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
                 row.forEach { (label, count, accent) ->
@@ -354,16 +396,104 @@ private fun OverviewPane(state: AppState) {
             }
         }
 
+        // ── Expiry dashboard ─────────────────────────────────────────────────
+        // Reads the free-text date fields already being filled in on the phone.
+        // Nothing surfaces this there, so a passport quietly lapses.
+        if (expiries.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            GemCard(accent = AmberWarn, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "EXPIRING SOON",
+                    color = AmberWarn, fontSize = 10.sp,
+                    letterSpacing = 2.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(12.dp))
+                expiries.take(6).forEach { item ->
+                    val tone = when {
+                        item.expired -> ExpenseRed
+                        item.urgent -> AmberWarn
+                        else -> TextSubtle
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            item.artifact.label1.ifBlank { item.artifact.type },
+                            color = TextParchment, fontSize = 13.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            item.artifact.type,
+                            color = TextMuted, fontSize = 10.sp,
+                            modifier = Modifier.padding(end = 12.dp)
+                        )
+                        Pill(
+                            when {
+                                item.expired -> "EXPIRED ${-item.daysRemaining}d AGO"
+                                item.daysRemaining == 0L -> "EXPIRES TODAY"
+                                else -> "${item.daysRemaining}d LEFT"
+                            },
+                            tone
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Password health ──────────────────────────────────────────────────
+        if (b.logins.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            val tone = when {
+                health >= 85 -> IncomeGreen
+                health >= 60 -> AmberWarn
+                else -> ExpenseRed
+            }
+            GemCard(accent = tone, modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "PASSWORD HEALTH",
+                        color = tone, fontSize = 10.sp,
+                        letterSpacing = 2.sp, fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text("$health%", color = tone, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.height(10.dp))
+                Box(
+                    Modifier.fillMaxWidth().height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)).background(SurfaceElevated)
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth(health / 100f).fillMaxHeight()
+                            .clip(RoundedCornerShape(3.dp)).background(tone)
+                    )
+                }
+                if (findings.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "${findings.size} of ${b.logins.size} logins need attention — " +
+                            "${findings.count { f -> f.sharedWith.isNotEmpty() }} reuse a password.",
+                        color = TextSubtle, fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
         if (b.logins.isEmpty() && b.artifacts.isEmpty() && b.prophecies.isEmpty()) {
             Spacer(Modifier.height(20.dp))
             Text(
-                "This vault is empty. Use “Import Migration Seal” in the sidebar to bring in " +
+                "This vault is empty. Use \u201CImport Migration Seal\u201D in the sidebar to bring in " +
                     "an archive exported from the Android app.",
                 color = TextSubtle,
                 fontSize = 13.sp,
                 lineHeight = 20.sp
             )
         }
+
+        Spacer(Modifier.height(24.dp))
+        Text("Press Ctrl+K to search everything", color = TextMuted, fontSize = 10.sp)
+        Spacer(Modifier.height(20.dp))
     }
 }
 

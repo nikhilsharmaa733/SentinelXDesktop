@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
+import com.nikhil.sentinelx.desktop.ui.panes.LoginsPane
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,6 +40,7 @@ fun AppShell(state: AppState) {
         Box(Modifier.weight(1f).fillMaxHeight()) {
             when (state.section) {
                 Section.OVERVIEW -> OverviewPane(state)
+                Section.LOGINS -> LoginsPane(state)
                 else -> PlaceholderPane(state.section)
             }
         }

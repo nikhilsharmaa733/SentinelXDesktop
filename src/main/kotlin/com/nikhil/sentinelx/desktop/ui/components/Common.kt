@@ -6,7 +6,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -223,6 +225,25 @@ fun Modifier.rowSurface(selected: Boolean): Modifier {
         label = "rowTint"
     )
     return this.hoverable(interaction).background(tint)
+}
+
+/**
+ * Requests focus once the node is actually attached to the focus tree.
+ *
+ * Calling FocusRequester.requestFocus() from a LaunchedEffect that fires on the
+ * first frame throws "FocusRequester is not initialized" — the composable exists
+ * but its focus target node does not yet, which is especially common inside a
+ * Popup. On desktop that exception lands on the AWT event thread and takes the
+ * whole window down, so it must never be thrown rather than merely caught.
+ *
+ * Waits a frame at a time until the node attaches, then gives up quietly. Failing
+ * to focus a field is a small annoyance; crashing the app is not.
+ */
+suspend fun FocusRequester.requestWhenReady(attempts: Int = 12) {
+    repeat(attempts) {
+        withFrameNanos { }
+        if (runCatching { requestFocus() }.isSuccess) return
+    }
 }
 
 @Composable

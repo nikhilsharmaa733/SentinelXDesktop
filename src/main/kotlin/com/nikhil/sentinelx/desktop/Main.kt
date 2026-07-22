@@ -20,7 +20,22 @@ import com.nikhil.sentinelx.desktop.ui.AppState
 import com.nikhil.sentinelx.desktop.ui.UnlockScreen
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
-fun main() = application {
+fun main() {
+    // An uncaught exception on the AWT event thread otherwise tears the window down
+    // and takes any unsaved edit with it — which is how a FocusRequester timing bug
+    // in the command palette killed the whole app. Every mutation is persisted
+    // immediately, so surviving in a degraded state is strictly better than exiting.
+    //
+    // Deliberately logs rather than swallowing silently: a crash that leaves no
+    // trace is worse to diagnose than one that closes the window.
+    Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+        System.err.println("Uncaught exception on ${thread.name}:")
+        error.printStackTrace()
+    }
+    runApp()
+}
+
+private fun runApp() = application {
     Window(
         onCloseRequest = ::exitApplication,
         title = "SentinelX",

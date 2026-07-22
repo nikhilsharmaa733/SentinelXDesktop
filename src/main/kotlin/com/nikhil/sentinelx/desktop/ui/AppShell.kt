@@ -57,7 +57,7 @@ import java.io.File
 fun AppShell(state: AppState) {
     var paletteOpen by remember { mutableStateOf(false) }
     val shellFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { shellFocus.requestFocus() }
+    LaunchedEffect(Unit) { shellFocus.requestWhenReady() }
 
     // Ctrl+K anywhere opens global search. Handled at the shell so it works no
     // matter which pane holds focus.

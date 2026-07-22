@@ -149,7 +149,7 @@ private fun ChronicleReader(doc: ChronicleEntity, state: AppState, onEdit: () ->
 
     var index by remember(doc.id) { mutableStateOf(0) }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(doc.id) { index = 0; focus.requestFocus() }
+    LaunchedEffect(doc.id) { index = 0; focus.requestWhenReady() }
 
     fun move(delta: Int) {
         if (pages.isNotEmpty()) index = (index + delta).coerceIn(0, pages.lastIndex)

@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nikhil.sentinelx.desktop.ui.components.requestWhenReady
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -49,7 +50,7 @@ fun UnlockScreen(state: AppState, onUnlocked: () -> Unit) {
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    LaunchedEffect(Unit) { focus.requestWhenReady() }
 
     val tooShort = creating && password.isNotEmpty() && password.length < MIN_PASSWORD
     val mismatch = creating && confirm.isNotEmpty() && password != confirm

@@ -24,6 +24,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
 import com.nikhil.sentinelx.desktop.ui.Section
+import com.nikhil.sentinelx.desktop.ui.components.requestWhenReady
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
 /** One searchable thing from anywhere in the vault. */
@@ -107,7 +108,7 @@ fun CommandPalette(
 
     LaunchedEffect(query) { cursor = 0 }
     LaunchedEffect(cursor) { if (results.isNotEmpty()) listState.animateScrollToItem(cursor) }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    LaunchedEffect(Unit) { focus.requestWhenReady() }
 
     fun choose(entry: PaletteEntry?) {
         entry ?: return

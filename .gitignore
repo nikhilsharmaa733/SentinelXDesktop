@@ -1,6 +1,10 @@
 .gradle/
 build/
 *.iml
+
+# Android Studio writes this on sync (it points at your Android SDK). Machine-
+# specific, and this project doesn't use the SDK at all — it's a plain JVM app.
+local.properties
 .idea/workspace.xml
 .idea/caches/
 .idea/libraries/

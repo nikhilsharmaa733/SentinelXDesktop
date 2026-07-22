@@ -3,11 +3,19 @@ package com.nikhil.sentinelx.desktop.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.nikhil.sentinelx.desktop.core.format.AccountEntity
+import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
+import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
+import com.nikhil.sentinelx.desktop.core.format.LoginEntity
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
+import com.nikhil.sentinelx.desktop.core.format.ProphecyEntity
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
+import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
+import com.nikhil.sentinelx.desktop.core.format.referencedImages
 import com.nikhil.sentinelx.desktop.core.store.LocalCrypto
 import com.nikhil.sentinelx.desktop.core.store.VaultStore
 import java.io.File
+import java.util.UUID
 
 /** Which top-level section the sidebar has selected. */
 enum class Section(val label: String, val glyph: String) {
@@ -105,6 +113,104 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
 
     fun readImage(name: String): ByteArray? = session?.readImage(name)
 
+    /**
+     * Stores an image and returns the filename to reference it by.
+     *
+     * Names match the phone's convention (`ImageUtils.saveToInternalVault`) so an
+     * archive written here is indistinguishable from one the phone produced.
+     */
+    fun addImage(bytes: ByteArray, extension: String = "webp"): String {
+        val name = "IMG_${UUID.randomUUID()}.$extension"
+        session?.putImage(name, bytes)
+        return name
+    }
+
+    // ── CRUD ──────────────────────────────────────────────────────────────────
+    //
+    // IDs are allocated as max+1 per collection. They only need to be unique within
+    // this vault: restoring on the phone maps every row through `copy(id = 0)` and
+    // lets Room reassign, so they never have to agree across devices.
+
+    private fun <T> nextId(items: List<T>, idOf: (T) -> Int): Int =
+        (items.maxOfOrNull(idOf) ?: 0) + 1
+
+    private fun <T> nextLongId(items: List<T>, idOf: (T) -> Long): Long =
+        (items.maxOfOrNull(idOf) ?: 0L) + 1L
+
+    fun upsertLogin(login: LoginEntity) = mutate { b ->
+        val id = if (login.id == 0) nextId(b.logins) { it.id } else login.id
+        val entry = login.copy(id = id)
+        b.copy(logins = b.logins.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteLogin(id: Int) = mutate { b -> b.copy(logins = b.logins.filterNot { it.id == id }) }
+
+    fun upsertArtifact(artifact: ArtifactEntity) = mutate { b ->
+        val id = if (artifact.id == 0) nextId(b.artifacts) { it.id } else artifact.id
+        val entry = artifact.copy(id = id, timestamp = artifact.timestamp.orNow())
+        b.copy(artifacts = b.artifacts.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteArtifact(id: Int) = mutate { b -> b.copy(artifacts = b.artifacts.filterNot { it.id == id }) }
+
+    fun upsertProphecy(note: ProphecyEntity) = mutate { b ->
+        val id = if (note.id == 0) nextId(b.prophecies) { it.id } else note.id
+        val entry = note.copy(id = id, timestamp = System.currentTimeMillis())
+        b.copy(prophecies = b.prophecies.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteProphecy(id: Int) = mutate { b -> b.copy(prophecies = b.prophecies.filterNot { it.id == id }) }
+
+    fun upsertChronicle(doc: ChronicleEntity) = mutate { b ->
+        val id = if (doc.id == 0) nextId(b.chronicles) { it.id } else doc.id
+        val entry = doc.copy(id = id, timestamp = doc.timestamp.orNow())
+        b.copy(chronicles = b.chronicles.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteChronicle(id: Int) = mutate { b -> b.copy(chronicles = b.chronicles.filterNot { it.id == id }) }
+
+    fun upsertAccount(account: AccountEntity) = mutate { b ->
+        val id = if (account.id == 0L) nextLongId(b.accounts) { it.id } else account.id
+        val entry = account.copy(id = id, timestamp = account.timestamp.orNow())
+        b.copy(accounts = b.accounts.replacingOrAdding(entry) { it.id == id })
+    }
+
+    /** Deleting an account also removes its transactions, or they become unreachable ghosts. */
+    fun deleteAccount(id: Long) = mutate { b ->
+        b.copy(
+            accounts = b.accounts.filterNot { it.id == id },
+            ledger = b.ledger.filterNot { it.accountId == id }
+        )
+    }
+
+    fun upsertTransaction(tx: TransactionEntity) = mutate { b ->
+        val id = if (tx.id == 0L) nextLongId(b.ledger) { it.id } else tx.id
+        val entry = tx.copy(id = id, timestamp = tx.timestamp.orNow())
+        b.copy(ledger = b.ledger.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteTransaction(id: Long) = mutate { b -> b.copy(ledger = b.ledger.filterNot { it.id == id }) }
+
+    // ── Export ────────────────────────────────────────────────────────────────
+
+    /**
+     * Writes a Migration Seal the Android app can restore.
+     *
+     * Always v2 (SXV2, 600k iterations) — the same format the phone writes — so the
+     * round trip is symmetric. Only referenced images are packed; orphans accumulate
+     * on the phone when records are deleted and there is no reason to carry them.
+     */
+    fun exportArchive(file: File, password: CharArray): Boolean = guard("Exporting…") {
+        val active = session ?: error("Vault is locked")
+        val images = backup.referencedImages()
+            .mapNotNull { name -> active.readImage(name)?.let { name to it } }
+            .toMap()
+        SxvArchive.write(file, backup, images, password)
+        true
+    } ?: false
+
+    private fun Long.orNow(): Long = if (this == 0L) System.currentTimeMillis() else this
+
     private fun <T> guard(label: String, block: () -> T): T? {
         busy = label
         error = null
@@ -121,3 +227,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         }
     }
 }
+
+/** Replaces the matching element, or appends when there is none. */
+private fun <T> List<T>.replacingOrAdding(item: T, match: (T) -> Boolean): List<T> =
+    if (any(match)) map { if (match(it)) item else it } else this + item

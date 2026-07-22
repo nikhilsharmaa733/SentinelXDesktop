@@ -56,6 +56,10 @@ fun LoginsPane(state: AppState) {
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
 
+    var editing by remember { mutableStateOf<LoginEntity?>(null) }
+    var creating by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PaneHeader("Logins", "${logins.size} records") {
             val score = remember(logins) { PasswordAudit.score(logins) }
@@ -109,11 +113,23 @@ fun LoginsPane(state: AppState) {
                 if (selected == null) {
                     EmptyState("ᛗ", "NOTHING SELECTED", "Choose a login from the list")
                 } else {
-                    LoginDetail(selected, findings[selected.id]?.sharedWith.orEmpty())
+                    LoginDetail(
+                        login = selected,
+                        sharedWith = findings[selected.id]?.sharedWith.orEmpty(),
+                        onEdit = { editing = selected }
+                    )
                 }
             }
         }
     }
+
+        Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
+            AddButton(onClick = { creating = true })
+        }
+    }
+
+    if (creating) LoginEditor(state, null) { creating = false }
+    editing?.let { target -> LoginEditor(state, target) { editing = null } }
 }
 
 @Composable
@@ -166,13 +182,13 @@ private fun LoginRow(
 }
 
 @Composable
-private fun LoginDetail(login: LoginEntity, sharedWith: List<String>) {
+private fun LoginDetail(login: LoginEntity, sharedWith: List<String>, onEdit: () -> Unit) {
     var revealed by remember(login.id) { mutableStateOf(false) }
     val accent = accentFor(login.siteName)
     val strength = remember(login.password) { Strength.of(login.password) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Box(
                 Modifier.size(52.dp).clip(CircleShape)
                     .background(accent.copy(0.14f))
@@ -197,6 +213,10 @@ private fun LoginDetail(login: LoginEntity, sharedWith: List<String>) {
                     fontFamily = FontFamily.Serif
                 )
                 Text("LOGIN RECORD", color = TextMuted, fontSize = 9.sp, letterSpacing = 3.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onEdit) {
+                Text("EDIT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
         }
 

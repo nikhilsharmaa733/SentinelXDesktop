@@ -60,6 +60,10 @@ fun NotesPane(state: AppState) {
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
 
+    var editing by remember { mutableStateOf<ProphecyEntity?>(null) }
+    var creating by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PaneHeader("Notes", "${notes.size} entries")
 
@@ -105,10 +109,18 @@ fun NotesPane(state: AppState) {
 
             Box(Modifier.weight(1f).fillMaxHeight().padding(32.dp)) {
                 if (selected == null) EmptyState("ᚱ", "NOTHING SELECTED", "Choose a note")
-                else NoteReader(selected)
+                else NoteReader(selected) { editing = selected }
             }
         }
     }
+
+        Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
+            AddButton(onClick = { creating = true })
+        }
+    }
+
+    if (creating) NoteEditor(state, null) { creating = false }
+    editing?.let { target -> NoteEditor(state, target) { editing = null } }
 }
 
 /** Horizontal overflow without a scrollbar — the chip row is short by design. */
@@ -165,7 +177,7 @@ private fun NoteRow(note: ProphecyEntity, selected: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun NoteReader(note: ProphecyEntity) {
+private fun NoteReader(note: ProphecyEntity, onEdit: () -> Unit) {
     val sigil = sigilOf(note.sigil)
     val words = remember(note.content) {
         note.content.split(Regex("\\s+")).count { it.isNotBlank() }
@@ -190,6 +202,10 @@ private fun NoteReader(note: ProphecyEntity) {
                     letterSpacing = 1.5.sp
                 )
             }
+            TextButton(onClick = onEdit) {
+                Text("EDIT", color = sigil.color, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            }
+            Spacer(Modifier.width(6.dp))
             CopyButton("${note.title}\n\n${note.content}", "note", sigil.color)
         }
 

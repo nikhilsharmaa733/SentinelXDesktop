@@ -139,6 +139,7 @@ private fun Sidebar(state: AppState) {
         Spacer(Modifier.height(12.dp))
 
         SidebarAction("Import Migration Seal") { ImportDialogHost(state) }
+        SidebarAction("Export Migration Seal") { ExportDialogHost(state) }
         SidebarTextButton("Lock Vault") { state.lock() }
     }
 }
@@ -346,6 +347,145 @@ private fun ImportDialogHost(state: AppState, onClose: () -> Unit = {}) {
  * AWT's native file dialog rather than Swing's JFileChooser — it uses the real
  * Windows/GTK picker, which looks like the rest of the OS instead of like Java.
  */
+
+/**
+ * Writes a Migration Seal the phone can restore, closing the round trip.
+ *
+ * Always v2 (SXV2, 600,000 iterations), matching what the phone writes. Requires
+ * the password twice — a mistyped export password produces an archive nobody can
+ * ever open, and there is no way to detect that until you need it.
+ */
+@Composable
+private fun ExportDialogHost(state: AppState, onClose: () -> Unit = {}) {
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf<String?>(null) }
+    var done by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    val tooShort = password.isNotEmpty() && password.length < 8
+    val mismatch = confirm.isNotEmpty() && password != confirm
+    val ready = password.length >= 8 && password == confirm
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = BackgroundDeep,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Text(
+                if (done == null) "EXPORT MIGRATION SEAL" else "SEAL CREATED",
+                color = GoldTarnished, fontWeight = FontWeight.Bold,
+                letterSpacing = 2.sp, fontSize = 14.sp
+            )
+        },
+        text = {
+            Column(Modifier.width(430.dp)) {
+                if (done != null) {
+                    Text("Saved to:", color = TextSubtle, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(done!!, color = GoldIce, fontSize = 12.sp)
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "On the phone: Vault \u2192 Migration Restore, and enter this password. " +
+                            "Note that restoring REPLACES everything currently on the phone.",
+                        color = TextSubtle, fontSize = 11.sp, lineHeight = 17.sp
+                    )
+                } else {
+                    Text(
+                        "This archive can be restored on the Android app. Store the password " +
+                            "somewhere safe \u2014 it cannot be recovered.",
+                        color = TextSubtle, fontSize = 12.sp, lineHeight = 17.sp
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    listOf(
+                        "Logins" to state.backup.logins.size,
+                        "Cards" to state.backup.artifacts.size,
+                        "Notes" to state.backup.prophecies.size,
+                        "Chronicles" to state.backup.chronicles.size,
+                        "Ledger rows" to state.backup.ledger.size,
+                        "Accounts" to state.backup.accounts.size
+                    ).forEach { (name, n) ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+                            Text(name, color = TextMuted, fontSize = 11.sp)
+                            Spacer(Modifier.weight(1f))
+                            Text("$n", color = TextSubtle, fontSize = 11.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = password, onValueChange = { password = it }, singleLine = true,
+                        label = { Text("Archive password", fontSize = 11.sp) },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CyanGlow.copy(0.7f),
+                            unfocusedBorderColor = GoldDark.copy(0.3f),
+                            focusedTextColor = TextParchment, unfocusedTextColor = TextParchment,
+                            cursorColor = CyanGlow
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = confirm, onValueChange = { confirm = it }, singleLine = true,
+                        label = { Text("Confirm password", fontSize = 11.sp) },
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CyanGlow.copy(0.7f),
+                            unfocusedBorderColor = GoldDark.copy(0.3f),
+                            focusedTextColor = TextParchment, unfocusedTextColor = TextParchment,
+                            cursorColor = CyanGlow
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    val warn = when {
+                        message != null -> message
+                        mismatch -> "Passwords do not match."
+                        tooShort -> "At least 8 characters."
+                        else -> null
+                    }
+                    warn?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = if (tooShort) AmberWarn else ExpenseRed, fontSize = 11.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (done != null) {
+                TextButton(onClick = onClose) { Text("DONE", color = CyanGlow, fontWeight = FontWeight.Bold) }
+            } else {
+                TextButton(enabled = ready, onClick = {
+                    val target = chooseSaveLocation() ?: return@TextButton
+                    scope.launch {
+                        message = null
+                        val ok = withContext(Dispatchers.Default) {
+                            state.exportArchive(target, password.toCharArray())
+                        }
+                        password = ""; confirm = ""
+                        if (ok) done = target.absolutePath else message = state.error ?: "Export failed."
+                    }
+                }) {
+                    Text("CHOOSE LOCATION\u2026", color = if (ready) CyanGlow else TextMuted, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        dismissButton = {
+            if (done == null) TextButton(onClick = { password = ""; onClose() }) {
+                Text("CANCEL", color = TextMuted)
+            }
+        }
+    )
+}
+
+private fun chooseSaveLocation(): File? {
+    val dialog = FileDialog(null as Frame?, "Save Migration Seal", FileDialog.SAVE)
+    dialog.file = "Sentinel_Migration_${System.currentTimeMillis()}.sxv"
+    dialog.isVisible = true
+    val dir = dialog.directory ?: return null
+    val file = dialog.file ?: return null
+    return File(dir, if (file.endsWith(".sxv")) file else "$file.sxv")
+}
+
 private fun chooseSxvFile(): File? {
     val dialog = FileDialog(null as Frame?, "Select Migration Seal", FileDialog.LOAD)
     dialog.setFilenameFilter { _, name -> name.endsWith(".sxv") }

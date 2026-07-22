@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.window.rememberWindowState
 import com.nikhil.sentinelx.desktop.ui.AppShell
 import com.nikhil.sentinelx.desktop.ui.AppState
@@ -39,6 +40,10 @@ private fun runApp() = application {
     Window(
         onCloseRequest = ::exitApplication,
         title = "SentinelX",
+        // Window icon: taskbar, Alt-Tab and the window manager's title bar. The
+        // packaged installer sets its own icon, but `./gradlew run` and any plain
+        // `java -jar` launch would otherwise show the generic Java coffee cup.
+        icon = painterResource("app-icon.png"),
         state = rememberWindowState(width = 1180.dp, height = 760.dp)
     ) {
         val state = remember { AppState() }

@@ -106,7 +106,11 @@ compose.desktop {
                 "jdk.unsupported"   // sun.misc.Unsafe, used by Skia bindings
             )
 
+            // Icons. The .ico embeds 16-256px: Windows picks the closest size for
+            // the taskbar, Start Menu and Alt-Tab, and a single-size icon looks
+            // pixelated in whichever context does not match.
             windows {
+                iconFile.set(project.file("icons/sentinelx.ico"))
                 menu = true
                 shortcut = true
                 dirChooser = true
@@ -117,6 +121,7 @@ compose.desktop {
             }
 
             linux {
+                iconFile.set(project.file("icons/sentinelx.png"))
                 packageName = "sentinelx"
                 menuGroup = "Utility"
             }

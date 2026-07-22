@@ -58,6 +58,10 @@ fun ChroniclesPane(state: AppState) {
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
 
+    var editing by remember { mutableStateOf<ChronicleEntity?>(null) }
+    var creating by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PaneHeader("Chronicles", "${chronicles.size} documents")
 
@@ -88,10 +92,18 @@ fun ChroniclesPane(state: AppState) {
 
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 if (selected == null) EmptyState("ᛀ", "NOTHING SELECTED", "Choose a document")
-                else ChronicleReader(selected, state)
+                else ChronicleReader(selected, state) { editing = selected }
             }
         }
     }
+
+        Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
+            AddButton(onClick = { creating = true })
+        }
+    }
+
+    if (creating) ChronicleEditor(state, null) { creating = false }
+    editing?.let { t -> ChronicleEditor(state, t) { editing = null } }
 }
 
 @Composable
@@ -127,7 +139,7 @@ private fun ChronicleRow(doc: ChronicleEntity, selected: Boolean, onClick: () ->
 }
 
 @Composable
-private fun ChronicleReader(doc: ChronicleEntity, state: AppState) {
+private fun ChronicleReader(doc: ChronicleEntity, state: AppState, onEdit: () -> Unit) {
     // Front image first if it isn't already among the pages, so the cover leads.
     val pages = remember(doc.id, doc.pages, doc.frontImageUri) {
         val listed = doc.pageFilenames()
@@ -178,6 +190,9 @@ private fun ChronicleReader(doc: ChronicleEntity, state: AppState) {
                     ).joinToString(" · "),
                     color = TextMuted, fontSize = 10.sp, letterSpacing = 1.sp
                 )
+            }
+            TextButton(onClick = onEdit) {
+                Text("EDIT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
             if (pages.size > 1) {
                 IconButton(onClick = { move(-1) }, enabled = index > 0) {

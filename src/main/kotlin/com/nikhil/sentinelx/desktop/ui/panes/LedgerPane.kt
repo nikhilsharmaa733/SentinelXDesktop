@@ -63,8 +63,18 @@ fun LedgerPane(state: AppState) {
         }.sortedByDescending { it.timestamp }
     }
 
+    var editingTx by remember { mutableStateOf<TransactionEntity?>(null) }
+    var creatingTx by remember { mutableStateOf(false) }
+    var editingAccount by remember { mutableStateOf<AccountEntity?>(null) }
+    var creatingAccount by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        PaneHeader("Ledger", "${allTx.size} transactions across ${accounts.size} accounts")
+        PaneHeader("Ledger", "${allTx.size} transactions across ${accounts.size} accounts") {
+            TextButton(onClick = { creatingAccount = true }) {
+                Text("+ ACCOUNT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            }
+        }
 
         Row(Modifier.fillMaxSize()) {
             Column(
@@ -89,7 +99,8 @@ fun LedgerPane(state: AppState) {
                             name = account.name,
                             balance = allTx.filter { it.accountId == account.id }.netBalance(),
                             selected = active == account.id,
-                            accent = account.color()
+                            accent = account.color(),
+                            onEdit = { editingAccount = account }
                         ) { accountId = account.id }
                     }
                     item { Spacer(Modifier.height(20.dp)) }
@@ -108,7 +119,9 @@ fun LedgerPane(state: AppState) {
                         EmptyState("ᚢ", "NO MATCHES", "Try a different search")
                     } else {
                         LazyColumn(Modifier.fillMaxSize()) {
-                            items(transactions, key = { it.id }) { TransactionRow(it) }
+                            items(transactions, key = { it.id }) { tx ->
+                                TransactionRow(tx) { editingTx = tx }
+                            }
                             item { Spacer(Modifier.height(20.dp)) }
                         }
                     }
@@ -116,6 +129,18 @@ fun LedgerPane(state: AppState) {
             }
         }
     }
+
+        if (accounts.isNotEmpty()) {
+            Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
+                AddButton(onClick = { creatingTx = true })
+            }
+        }
+    }
+
+    if (creatingTx) TransactionEditor(state, null, active) { creatingTx = false }
+    editingTx?.let { t -> TransactionEditor(state, t, active) { editingTx = null } }
+    if (creatingAccount) AccountEditor(state, null) { creatingAccount = false }
+    editingAccount?.let { a -> AccountEditor(state, a) { editingAccount = null } }
 }
 
 private fun List<TransactionEntity>.netBalance(): Double =
@@ -131,6 +156,7 @@ private fun AccountRow(
     balance: Double,
     selected: Boolean,
     accent: Color,
+    onEdit: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -157,6 +183,15 @@ private fun AccountRow(
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
         )
+        if (onEdit != null && selected) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "✎",
+                color = TextMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable { onEdit() }
+            )
+        }
     }
 }
 
@@ -231,12 +266,13 @@ private fun SummaryTile(label: String, amount: Double, accent: Color, modifier: 
 }
 
 @Composable
-private fun TransactionRow(tx: TransactionEntity) {
+private fun TransactionRow(tx: TransactionEntity, onEdit: () -> Unit) {
     val accent = if (tx.isIncoming) IncomeGreen else ExpenseRed
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(SurfaceStone.copy(0.5f))
+            .clickable { onEdit() }
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

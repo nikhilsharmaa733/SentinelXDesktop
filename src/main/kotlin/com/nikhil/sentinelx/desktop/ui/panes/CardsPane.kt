@@ -53,6 +53,10 @@ fun CardsPane(state: AppState) {
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
 
+    var editing by remember { mutableStateOf<ArtifactEntity?>(null) }
+    var creating by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PaneHeader("Cards", "${artifacts.size} artifacts")
 
@@ -83,10 +87,18 @@ fun CardsPane(state: AppState) {
 
             Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
                 if (selected == null) EmptyState("ᚠ", "NOTHING SELECTED", "Choose an artifact")
-                else ArtifactDetail(selected, state)
+                else ArtifactDetail(selected, state) { editing = selected }
             }
         }
     }
+
+        Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
+            AddButton(onClick = { creating = true })
+        }
+    }
+
+    if (creating) ArtifactEditor(state, null) { creating = false }
+    editing?.let { t -> ArtifactEditor(state, t) { editing = null } }
 }
 
 /** Field captions per document type, mirroring the phone's idRunes map. */
@@ -141,7 +153,7 @@ private fun ArtifactRow(artifact: ArtifactEntity, selected: Boolean, onClick: ()
 }
 
 @Composable
-private fun ArtifactDetail(artifact: ArtifactEntity, state: AppState) {
+private fun ArtifactDetail(artifact: ArtifactEntity, state: AppState, onEdit: () -> Unit) {
     var revealed by remember(artifact.id) { mutableStateOf(false) }
     val accent = accentForType(artifact.type)
     val captions = labelsFor(artifact.type)
@@ -159,7 +171,13 @@ private fun ArtifactDetail(artifact: ArtifactEntity, state: AppState) {
             fontFamily = FontFamily.Serif
         )
         Spacer(Modifier.height(4.dp))
-        Pill(artifact.type.uppercase(), accent)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Pill(artifact.type.uppercase(), accent)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onEdit) {
+                Text("EDIT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            }
+        }
 
         Spacer(Modifier.height(24.dp))
 

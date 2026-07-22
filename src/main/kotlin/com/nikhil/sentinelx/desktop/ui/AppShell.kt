@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
+import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
 import com.nikhil.sentinelx.desktop.ui.panes.LoginsPane
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,7 @@ fun AppShell(state: AppState) {
             when (state.section) {
                 Section.OVERVIEW -> OverviewPane(state)
                 Section.LOGINS -> LoginsPane(state)
+                Section.CARDS -> CardsPane(state)
                 else -> PlaceholderPane(state.section)
             }
         }

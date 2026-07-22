@@ -72,15 +72,8 @@ fun UnlockScreen(state: AppState, onUnlocked: () -> Unit) {
         }
     }
 
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.radialGradient(
-                listOf(BackgroundCenter, BackgroundDeep, BackgroundVoid),
-                radius = 1400f
-            )
-        ),
-        contentAlignment = Alignment.Center
-    ) {
+    SentinelBackground {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.width(420.dp)
@@ -90,11 +83,13 @@ fun UnlockScreen(state: AppState, onUnlocked: () -> Unit) {
             Spacer(Modifier.height(18.dp))
             Text(
                 "SENTINEL X",
-                color = GoldTarnished,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Serif,
-                letterSpacing = 8.sp
+                style = androidx.compose.ui.text.TextStyle(
+                    brush = Brush.horizontalGradient(listOf(GoldIce, GoldBright, GoldTarnished, GoldDark)),
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Black,
+                    fontFamily = FontFamily.Serif,
+                    letterSpacing = 9.sp
+                )
             )
             Text(
                 if (creating) "FORGE THE SEAL" else "SPEAK THE WORD",
@@ -157,6 +152,7 @@ fun UnlockScreen(state: AppState, onUnlocked: () -> Unit) {
                 )
             }
         }
+    }
     }
 }
 

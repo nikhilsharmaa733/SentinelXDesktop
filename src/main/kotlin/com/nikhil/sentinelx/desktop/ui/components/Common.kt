@@ -1,6 +1,12 @@
 package com.nikhil.sentinelx.desktop.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -48,23 +54,38 @@ fun accentFor(name: String): Color =
 
 @Composable
 fun PaneHeader(title: String, subtitle: String, trailing: @Composable RowScope.() -> Unit = {}) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, top = 30.dp, bottom = 18.dp),
-        verticalAlignment = Alignment.Bottom
-    ) {
-        Column {
-            Text(
-                title.uppercase(),
-                color = GoldTarnished,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Serif,
-                letterSpacing = 3.sp
-            )
-            Text(subtitle.uppercase(), color = TextMuted, fontSize = 9.sp, letterSpacing = 3.sp)
+    Column(Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, top = 28.dp)) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Column {
+                Text(
+                    title.uppercase(),
+                    // Gradient fill on the display type — the single cheapest thing
+                    // that makes a heading look crafted rather than defaulted.
+                    style = TextStyle(
+                        brush = Brush.horizontalGradient(listOf(GoldIce, GoldTarnished, GoldDark)),
+                        fontSize = 27.sp,
+                        fontWeight = FontWeight.Black,
+                        fontFamily = FontFamily.Serif,
+                        letterSpacing = 4.sp
+                    )
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle.uppercase(), color = TextMuted, fontSize = 9.sp, letterSpacing = 3.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            trailing()
         }
-        Spacer(Modifier.weight(1f))
-        trailing()
+        Spacer(Modifier.height(14.dp))
+        // Rule that fades out rather than stopping dead — a hard edge across a wide
+        // window looks like a table border.
+        Box(
+            Modifier.fillMaxWidth().height(1.dp).background(
+                Brush.horizontalGradient(
+                    listOf(GoldTarnished.copy(0.45f), GoldDark.copy(0.15f), Color.Transparent)
+                )
+            )
+        )
+        Spacer(Modifier.height(16.dp))
     }
 }
 
@@ -103,16 +124,30 @@ fun SearchField(
 fun GemCard(
     accent: Color = GoldTarnished,
     modifier: Modifier = Modifier,
+    stripe: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(
+    val shape = RoundedCornerShape(16.dp)
+    Box(
         modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(Brush.verticalGradient(listOf(SurfaceGem, SurfaceStone)))
-            .border(1.dp, accent.copy(0.2f), RoundedCornerShape(16.dp))
-            .padding(20.dp),
-        content = content
-    )
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(SurfaceGem, SurfaceStone, BackgroundDeep)))
+            .border(
+                width = 1.dp,
+                // Gradient border rather than a flat one: it catches the eye along
+                // the top edge and recedes at the bottom, which reads as lit.
+                brush = Brush.verticalGradient(listOf(accent.copy(0.35f), accent.copy(0.06f))),
+                shape = shape
+            )
+    ) {
+        if (stripe) {
+            Box(
+                Modifier.width(3.dp).fillMaxHeight()
+                    .background(Brush.verticalGradient(listOf(accent, accent.copy(0.1f))))
+            )
+        }
+        Column(Modifier.padding(start = if (stripe) 22.dp else 20.dp, top = 18.dp, end = 20.dp, bottom = 18.dp), content = content)
+    }
 }
 
 /**
@@ -165,6 +200,29 @@ fun Pill(text: String, color: Color) {
     ) {
         Text(text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
     }
+}
+
+/**
+ * Row background that responds to the pointer.
+ *
+ * Hover feedback is the main thing that separates a desktop app from a phone layout
+ * stretched wide — without it, a list of 40 logins gives no indication that rows are
+ * interactive until you click one.
+ */
+@Composable
+fun Modifier.rowSurface(selected: Boolean): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val tint by animateColorAsState(
+        when {
+            selected -> GoldDim.copy(0.34f)
+            hovered -> SurfaceGem.copy(0.55f)
+            else -> Color.Transparent
+        },
+        tween(140),
+        label = "rowTint"
+    )
+    return this.hoverable(interaction).background(tint)
 }
 
 @Composable

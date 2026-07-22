@@ -112,7 +112,7 @@ private fun ChronicleRow(doc: ChronicleEntity, selected: Boolean, onClick: () ->
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) GoldDim.copy(0.3f) else Color.Transparent)
+            .rowSurface(selected)
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically

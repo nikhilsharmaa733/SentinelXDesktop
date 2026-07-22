@@ -1,6 +1,10 @@
 package com.nikhil.sentinelx.desktop.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,11 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
 import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
-import com.nikhil.sentinelx.desktop.ui.components.CommandPalette
-import com.nikhil.sentinelx.desktop.ui.components.GemCard
-import com.nikhil.sentinelx.desktop.ui.components.HistoryDialog
-import com.nikhil.sentinelx.desktop.ui.components.Pill
-import com.nikhil.sentinelx.desktop.ui.components.buildIndex
+import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
 import com.nikhil.sentinelx.desktop.ui.panes.ChroniclesPane
 import com.nikhil.sentinelx.desktop.ui.panes.LedgerPane
@@ -73,13 +73,23 @@ fun AppShell(state: AppState) {
     ) {
         Sidebar(state)
         Box(Modifier.weight(1f).fillMaxHeight()) {
-            when (state.section) {
+            SentinelBackground {
+            // Crossfade rather than an instant swap: switching sections is a
+            // deliberate act and a hard cut reads as a flicker.
+            Crossfade(
+                targetState = state.section,
+                animationSpec = tween(260),
+                label = "section"
+            ) { current ->
+            when (current) {
                 Section.OVERVIEW -> OverviewPane(state)
                 Section.LOGINS -> LoginsPane(state)
                 Section.CARDS -> CardsPane(state)
                 Section.NOTES -> NotesPane(state)
                 Section.CHRONICLES -> ChroniclesPane(state)
                 Section.LEDGER -> LedgerPane(state)
+            }
+            }
             }
         }
     }
@@ -100,8 +110,18 @@ private fun Sidebar(state: AppState) {
         Modifier
             .width(212.dp)
             .fillMaxHeight()
-            .background(BackgroundVoid)
-            .border(width = 1.dp, color = GoldDark.copy(0.12f), shape = RoundedCornerShape(0.dp))
+            .background(Brush.verticalGradient(listOf(BackgroundVoid, Color(0xFF0A0A10), BackgroundVoid)))
+            .drawBehind {
+                // Hairline on the trailing edge only. A full border boxes the
+                // sidebar in and makes the window feel like two documents.
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color.Transparent, GoldDark.copy(0.35f), Color.Transparent)
+                    ),
+                    topLeft = Offset(size.width - 1f, 0f),
+                    size = androidx.compose.ui.geometry.Size(1f, size.height)
+                )
+            }
             .padding(vertical = 20.dp)
     ) {
         Row(
@@ -139,8 +159,8 @@ private fun Sidebar(state: AppState) {
         HorizontalDivider(color = GoldDark.copy(0.15f), modifier = Modifier.padding(horizontal = 16.dp))
         Spacer(Modifier.height(12.dp))
 
-        SidebarAction("Import Migration Seal") { ImportDialogHost(state) }
-        SidebarAction("Export Migration Seal") { ExportDialogHost(state) }
+        SidebarAction("Import Migration Seal") { ImportDialogHost(state, onClose = it) }
+        SidebarAction("Export Migration Seal") { ExportDialogHost(state, onClose = it) }
         SidebarAction("Version History") { HistoryDialog(state, onClose = it) }
         SidebarTextButton("Lock Vault") { state.lock() }
     }
@@ -163,11 +183,19 @@ private fun SidebarItem(section: Section, selected: Boolean, count: Int?, onClic
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) GoldDim.copy(0.35f) else Color.Transparent)
+            .rowSurface(selected)
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(start = 9.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // Accent bar marks the active section without relying on fill alone,
+        // which is easy to miss at a glance across a tall sidebar.
+        Box(
+            Modifier.width(3.dp).height(if (selected) 18.dp else 0.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Brush.verticalGradient(listOf(GoldBright, GoldTarnished)))
+        )
+        Spacer(Modifier.width(if (selected) 7.dp else 10.dp))
         Text(
             section.glyph,
             color = if (selected) GoldBright else TextMuted,
@@ -187,6 +215,14 @@ private fun SidebarItem(section: Section, selected: Boolean, count: Int?, onClic
     }
 }
 
+/**
+ * Sidebar entry that opens a dialog.
+ *
+ * The lambda receives a close trigger which the dialog MUST wire to its dismissal.
+ * Callers that ignore it produce a dialog nothing can close — which happened to both
+ * Import and Export, because their `onClose` carried a default `= {}` that let the
+ * mistake compile. Never give a dismissal callback a default.
+ */
 @Composable
 private fun SidebarAction(label: String, content: @Composable (trigger: () -> Unit) -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -220,7 +256,7 @@ private fun SidebarTextButton(label: String, onClick: () -> Unit) {
  * replacing a fuller vault — the phone's version of this has no such check.
  */
 @Composable
-private fun ImportDialogHost(state: AppState, onClose: () -> Unit = {}) {
+private fun ImportDialogHost(state: AppState, onClose: () -> Unit) {
     var path by remember { mutableStateOf<File?>(null) }
     var password by remember { mutableStateOf("") }
     var preview by remember { mutableStateOf<SxvArchive.Payload?>(null) }
@@ -358,7 +394,7 @@ private fun ImportDialogHost(state: AppState, onClose: () -> Unit = {}) {
  * ever open, and there is no way to detect that until you need it.
  */
 @Composable
-private fun ExportDialogHost(state: AppState, onClose: () -> Unit = {}) {
+private fun ExportDialogHost(state: AppState, onClose: () -> Unit) {
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }

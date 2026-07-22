@@ -254,7 +254,7 @@ private fun AccountRow(
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) GoldDim.copy(0.3f) else Color.Transparent)
+            .rowSurface(selected)
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -363,7 +363,8 @@ private fun TransactionRow(tx: TransactionEntity, onEdit: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(SurfaceStone.copy(0.5f))
+            .rowSurface(false)
+            .background(SurfaceStone.copy(0.35f))
             .clickable { onEdit() }
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically

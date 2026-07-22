@@ -34,6 +34,27 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+
+    // Gradle prints nothing per-test by default, so a green BUILD SUCCESSFUL looks
+    // identical whether 19 tests passed or none ran at all. Print each one.
+    testLogging {
+        events("passed", "skipped", "failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showStandardStreams = false
+    }
+
+    // Per-class summary at the end, so the counts are visible without opening the report.
+    afterSuite(KotlinClosure2<TestDescriptor, TestResult, Unit>({ desc, result ->
+        if (desc.parent == null) {
+            println(
+                "\n  ${result.testCount} tests  ·  " +
+                    "${result.successfulTestCount} passed  ·  " +
+                    "${result.failedTestCount} failed  ·  " +
+                    "${result.skippedTestCount} skipped"
+            )
+            println("  HTML report: file://${layout.buildDirectory.get()}/reports/tests/test/index.html\n")
+        }
+    }))
 }
 
 /**

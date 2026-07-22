@@ -25,6 +25,12 @@ That format is the only coupling between the two programs.
   `jvmToolchain(...)` to the build — Gradle will hunt for a JDK that isn't installed and fail.
 - `./gradlew run` launches the app natively on Linux in seconds. No emulator, no device.
 - `./gradlew test` runs the format tests.
+- **`./run-isolated.sh` when someone is testing the app while you keep working.**
+  `./gradlew run` puts `build/classes/` on the classpath and the JVM loads classes
+  lazily as the user navigates, so rebuilding mid-session can make a screen they have
+  not opened yet disappear — a real click on "Version History" once produced
+  `ClassNotFoundException: HistoryDialogKt` for a class that compiled fine. The script
+  runs a snapshot copy of the uber jar, which holds no reference to `build/`.
 
 ## The format contract — read before touching `core/format`
 

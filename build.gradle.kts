@@ -36,6 +36,24 @@ tasks.test {
     useJUnitPlatform()
 }
 
+/**
+ * Verifies a real Migration Seal exported from the phone.
+ *
+ *   read -s -p "Password: " SXV_PASSWORD && export SXV_PASSWORD && echo
+ *   ./gradlew verifySxv --args="/path/to/vault.sxv" -q
+ *   unset SXV_PASSWORD
+ *
+ * The password comes from the environment, never --args, because arguments are
+ * visible in `ps` and recorded in shell history.
+ */
+tasks.register<JavaExec>("verifySxv") {
+    group = "verification"
+    description = "Parse a real .sxv archive and report counts (password via \$SXV_PASSWORD)"
+    mainClass.set("com.nikhil.sentinelx.desktop.tools.VerifyArchiveKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    environment("SXV_PASSWORD", System.getenv("SXV_PASSWORD") ?: "")
+}
+
 compose.desktop {
     application {
         mainClass = "com.nikhil.sentinelx.desktop.MainKt"

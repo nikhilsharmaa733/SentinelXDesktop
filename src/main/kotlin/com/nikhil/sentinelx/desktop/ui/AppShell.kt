@@ -20,6 +20,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
+import com.nikhil.sentinelx.desktop.ui.panes.ChroniclesPane
+import com.nikhil.sentinelx.desktop.ui.panes.LedgerPane
+import com.nikhil.sentinelx.desktop.ui.panes.NotesPane
 import com.nikhil.sentinelx.desktop.ui.panes.LoginsPane
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +46,9 @@ fun AppShell(state: AppState) {
                 Section.OVERVIEW -> OverviewPane(state)
                 Section.LOGINS -> LoginsPane(state)
                 Section.CARDS -> CardsPane(state)
-                else -> PlaceholderPane(state.section)
+                Section.NOTES -> NotesPane(state)
+                Section.CHRONICLES -> ChroniclesPane(state)
+                Section.LEDGER -> LedgerPane(state)
             }
         }
     }

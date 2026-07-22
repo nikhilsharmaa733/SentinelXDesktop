@@ -90,8 +90,20 @@ Menu entry, desktop shortcut, bundled runtime, and a directory chooser.
 ### 3. Plain JAR — no installer
 
 ```bash
-./gradlew packageUberJarForCurrentOS
+./gradlew runnableJar     # NOT packageUberJarForCurrentOS
 ```
+
+> ⚠️ **`packageUberJarForCurrentOS` alone produces a jar that will not start.**
+> Bouncy Castle ships a *signed* jar, and merging it keeps its signature entries
+> (the `.SF` and `.RSA` files under META-INF) whose digests describe the original
+> archive rather than the merged one. The JVM refuses to load it:
+>
+> ```
+> SecurityException: Invalid signature file digest for Manifest main attributes
+> ```
+>
+> `runnableJar` strips those entries and writes to `build/dist/`. Verified: it
+> launches. Always ship the `build/dist/` jar, never the `build/compose/jars/` one.
 
 Ship the jar with a launcher:
 

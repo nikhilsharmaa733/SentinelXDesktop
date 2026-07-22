@@ -21,10 +21,12 @@ cd "$(dirname "$0")"
 SNAPSHOT_DIR="${TMPDIR:-/tmp}/sentinelx-run"
 mkdir -p "$SNAPSHOT_DIR"
 
-echo "Building uber jar…"
-./gradlew packageUberJarForCurrentOS -q
+echo "Building runnable jar…"
+# runnableJar, not packageUberJarForCurrentOS: the raw uber jar carries Bouncy
+# Castle's signature entries and the JVM refuses to start it.
+./gradlew runnableJar -q
 
-JAR=$(find build/compose/jars -name "SentinelX-*.jar" -print -quit)
+JAR=$(find build/dist -name "SentinelX-*.jar" -print -quit)
 if [[ -z "$JAR" ]]; then
   echo "No jar produced — check the build output." >&2
   exit 1

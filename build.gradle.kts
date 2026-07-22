@@ -1,4 +1,10 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+// Imported rather than fully qualified: in the Gradle Kotlin DSL `java` resolves to
+// the Java plugin extension, so `java.util.zip.ZipFile` fails with
+// "Unresolved reference: util".
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 plugins {
     kotlin("jvm") version "2.0.21"
@@ -73,6 +79,61 @@ tasks.register<JavaExec>("verifySxv") {
     mainClass.set("com.nikhil.sentinelx.desktop.tools.VerifyArchiveKt")
     classpath = sourceSets["main"].runtimeClasspath
     environment("SXV_PASSWORD", System.getenv("SXV_PASSWORD") ?: "")
+}
+
+/**
+ * Produces a genuinely runnable uber jar.
+ *
+ * Bouncy Castle ships a **signed** jar. Merging it into an uber jar carries its
+ * signature entries across (the .SF and .RSA files under META-INF), but their
+ * digests describe the original archive, not the merged one — so the JVM refuses
+ * to start at all:
+ *
+ *   SecurityException: Invalid signature file digest for Manifest main attributes
+ *
+ * The jar from packageUberJarForCurrentOS is therefore unusable as-is. Stripping the
+ * signature entries is the standard fix; the signatures are meaningless once the
+ * archive has been repackaged anyway.
+ *
+ * NOTE: never write a glob like META-INF followed by slash-star in a block comment
+ * here. Kotlin nests block comments, so it opens a second one and the closing
+ * marker below ends only the inner comment — silently swallowing the code that
+ * follows. That is exactly how this task went missing on first attempt.
+ *
+ *   ./gradlew runnableJar   → build/dist/SentinelX-<os>-<arch>-<version>.jar
+ */
+tasks.register("runnableJar") {
+    group = "distribution"
+    description = "Uber jar with jar-signature entries stripped so it actually runs"
+    dependsOn("packageUberJarForCurrentOS")
+
+    doLast {
+        val source = fileTree("build/compose/jars") { include("SentinelX-*.jar") }.singleOrNull()
+            ?: error("No uber jar found — did packageUberJarForCurrentOS run?")
+
+        val outDir = layout.buildDirectory.dir("dist").get().asFile.apply { mkdirs() }
+        val target = File(outDir, source.name)
+
+        val signatureEntry = Regex("""^META-INF/.*\.(SF|DSA|RSA|EC)$""", RegexOption.IGNORE_CASE)
+        var stripped = 0
+
+        ZipFile(source).use { zip ->
+            ZipOutputStream(target.outputStream().buffered()).use { out ->
+                zip.entries().asSequence().forEach { entry ->
+                    if (signatureEntry.matches(entry.name)) {
+                        stripped++
+                        return@forEach
+                    }
+                    // A fresh entry: copying the original preserves compressed sizes
+                    // that no longer apply once content is re-deflated.
+                    out.putNextEntry(ZipEntry(entry.name))
+                    if (!entry.isDirectory) zip.getInputStream(entry).use { it.copyTo(out) }
+                    out.closeEntry()
+                }
+            }
+        }
+        logger.lifecycle("runnableJar: stripped $stripped signature entries → ${target.absolutePath}")
+    }
 }
 
 compose.desktop {

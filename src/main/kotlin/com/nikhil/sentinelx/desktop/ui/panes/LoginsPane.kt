@@ -48,7 +48,12 @@ fun LoginsPane(state: AppState) {
         else logins.filter {
             it.siteName.contains(query, true) || it.username.contains(query, true)
         }
-    }.sortedBy { it.siteName.lowercase() }
+    }.sortedWith(
+        // Favourites float to the top, then alphabetical. The whole point of
+        // pinning is that the entries you reach for daily stop needing a search.
+        compareByDescending<LoginEntity> { state.isFavourite(state.favouriteKey("login", it.siteName)) }
+            .thenBy { it.siteName.lowercase() }
+    )
 
     // Findings are keyed by id so the detail pane can show why an entry is flagged.
     val findings = remember(logins) { PasswordAudit.run(logins).associateBy { it.login.id } }
@@ -96,10 +101,13 @@ fun LoginsPane(state: AppState) {
                 } else {
                     LazyColumn(Modifier.fillMaxSize()) {
                         items(filtered, key = { it.id }) { login ->
+                            val favKey = state.favouriteKey("login", login.siteName)
                             LoginRow(
                                 login = login,
                                 selected = login.id == selectedId,
                                 flagged = findings[login.id] != null,
+                                favourite = state.isFavourite(favKey),
+                                onToggleFavourite = { state.toggleFavourite(favKey) },
                                 onClick = { selectedId = login.id }
                             )
                         }
@@ -137,6 +145,8 @@ private fun LoginRow(
     login: LoginEntity,
     selected: Boolean,
     flagged: Boolean,
+    favourite: Boolean,
+    onToggleFavourite: () -> Unit,
     onClick: () -> Unit
 ) {
     val accent = accentFor(login.siteName)
@@ -177,7 +187,14 @@ private fun LoginRow(
         }
         if (flagged) {
             Box(Modifier.size(6.dp).clip(CircleShape).background(AmberWarn))
+            Spacer(Modifier.width(6.dp))
         }
+        Text(
+            if (favourite) "★" else "☆",
+            color = if (favourite) GoldBright else TextMuted.copy(0.5f),
+            fontSize = 13.sp,
+            modifier = Modifier.clickable { onToggleFavourite() }
+        )
     }
 }
 

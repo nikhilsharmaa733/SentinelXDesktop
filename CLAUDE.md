@@ -88,15 +88,35 @@ unset SXV_PASSWORD
 Password comes from the environment, never `--args` (visible in `ps`, saved in shell history).
 Output is counts and integrity checks only — no field values — so it is safe to share.
 
-## Status
+## Status — feature complete
 
-- ✅ `core/format` — `MasterBackup.kt`, `SxvCrypto.kt`, `SxvArchive.kt`; 9 tests passing
-- ✅ Toolchain verified, window opens
-- ⬜ `core/store` — Argon2id local vault, atomic versioned saves
-- ⬜ App shell — master-password gate, sidebar, multi-pane
-- ⬜ Screens: Logins → Cards → Notes → Chronicles → Accounts/Ledger
-- ⬜ Command palette, password health audit, expiry dashboard, ledger analytics
-- ⬜ Packaging (`jpackage` cannot cross-compile — Windows installer needs a Windows host,
-  or Conveyor to cross-build from Linux)
+- ✅ `core/format` — `.sxv` read/write, both versions. **Verified against a real phone
+  export**: counts matched, so the contract holds end to end.
+- ✅ `core/store` — Argon2id local vault, atomic versioned saves, sealed image blobs
+- ✅ All six panes, full CRUD, images attach from disk
+- ✅ Command palette (Ctrl+K), password health, expiry dashboard, password generator
+- ✅ Import and export `.sxv`, CSV export for the ledger
+- ✅ Version history (undo), favourites
+- ⬜ Windows installer — see `PACKAGING.md`. `jpackage` cannot cross-compile, and the
+  JBR on this machine has no `jpackage` at all, so `createDistributable` fails here by
+  design. `packageUberJarForCurrentOS` works.
+
+42 tests passing.
+
+## Things that will bite whoever works on this next
+
+- **Sidecar, not schema.** Favourites and any future desktop-only state go in
+  `Session.readSidecar`/`writeSidecar`, never in `MasterBackup`. That data class is
+  the wire format; adding a field changes what the phone reads and Gson would drop it
+  there silently anyway.
+- **Uniqueness constraints the phone enforces but never surfaces.** `artifacts` is
+  UNIQUE on `(label1, label2)`, `chronicles` and `prophecies` on title, `accounts` on
+  name — all with `REPLACE`, so a collision *destroys* the other row on restore. Every
+  editor checks these before saving. Do not remove those checks.
+- **Editing a transaction must preserve its timestamp.** The phone's unique index on
+  `ledger` includes it, so changing it creates a second row on restore rather than
+  updating the existing one.
+- **Undo is built on store snapshots**, not a recycle bin — one mechanism covers bad
+  deletes, bad edits and bad imports alike.
 
 Full plan: `~/.claude/plans/typed-pondering-aho.md`

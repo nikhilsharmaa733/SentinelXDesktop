@@ -1,5 +1,6 @@
 package com.nikhil.sentinelx.desktop.ui
 
+import com.google.gson.Gson
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -63,6 +64,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
      */
     fun unlock(password: CharArray): Boolean = guard("Unlocking vault…") {
         session = store.unlock(password).also { backup = it.load() }
+        loadFavourites()
         locked = false
         true
     } ?: false
@@ -70,6 +72,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     fun create(password: CharArray, seed: MasterBackup = MasterBackup()): Boolean =
         guard("Creating vault…") {
             session = store.create(password, seed).also { backup = it.load() }
+            loadFavourites()
             locked = false
             true
         } ?: false
@@ -78,6 +81,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         session?.lock()
         session = null
         backup = MasterBackup()
+        favourites = emptySet()
         locked = true
         section = Section.OVERVIEW
     }
@@ -190,6 +194,57 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     }
 
     fun deleteTransaction(id: Long) = mutate { b -> b.copy(ledger = b.ledger.filterNot { it.id == id }) }
+
+    // ── Favourites ────────────────────────────────────────────────────────────
+    //
+    // Stored in a local sidecar, never in MasterBackup. The archive schema is fixed
+    // by the phone, and a favourites field would be silently dropped there anyway.
+
+    var favourites by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    /** Stable key across restores, since row IDs are reassigned by Room on the phone. */
+    fun favouriteKey(type: String, name: String) = "$type:${name.lowercase()}"
+
+    fun isFavourite(key: String) = key in favourites
+
+    fun toggleFavourite(key: String) {
+        favourites = if (key in favourites) favourites - key else favourites + key
+        runCatching {
+            session?.writeSidecar("favourites", Gson().toJson(favourites).toByteArray(Charsets.UTF_8))
+        }
+    }
+
+    private fun loadFavourites() {
+        favourites = runCatching {
+            session?.readSidecar("favourites")?.let { bytes ->
+                Gson().fromJson(bytes.toString(Charsets.UTF_8), Array<String>::class.java).toSet()
+            }
+        }.getOrNull() ?: emptySet()
+    }
+
+    // ── History / undo ────────────────────────────────────────────────────────
+    //
+    // Built on the snapshots VaultStore already writes before every save, rather
+    // than a parallel recycle bin. One mechanism covers accidental deletes, bad
+    // edits, and a botched import alike — a bin would only cover the first.
+
+    fun history(): List<Long> = session?.versions().orEmpty()
+
+    fun previewVersion(timestamp: Long): MasterBackup? =
+        runCatching { session?.loadVersion(timestamp) }.getOrNull()
+
+    /**
+     * Restores a snapshot. Saved as a new state rather than rewinding, so the
+     * current version is itself snapshotted first and the undo is undoable.
+     */
+    fun restoreVersion(timestamp: Long): Boolean = guard("Restoring…") {
+        val active = session ?: error("Vault is locked")
+        val previous = active.loadVersion(timestamp)
+        active.save(previous)
+        backup = previous
+        true
+    } ?: false
 
     // ── Export ────────────────────────────────────────────────────────────────
 

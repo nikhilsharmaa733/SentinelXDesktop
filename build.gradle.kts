@@ -81,12 +81,45 @@ compose.desktop {
 
         nativeDistributions {
             // Msi is produced only when jpackage runs ON Windows; Deb only on Linux.
-            // Listing both is harmless — each host builds the one it can.
-            targetFormats(TargetFormat.Msi, TargetFormat.Deb)
+            // jpackage cannot cross-compile, so each host builds the one it can.
+            targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "SentinelX"
             packageVersion = "1.0.0"
             description = "Offline personal vault"
             vendor = "Nikhil"
+            copyright = "© 2026 Nikhil. All rights reserved."
+
+            // Trim the bundled runtime to what is actually used. The default bundles
+            // every JDK module and roughly doubles the installer size.
+            //
+            // java.naming and java.security.jgss look unrelated but are pulled in by
+            // Bouncy Castle's provider registration; dropping them fails at runtime,
+            // not at build time, which is the worst way to find out.
+            includeAllModules = false
+            modules(
+                "java.base",
+                "java.desktop",     // AWT: file dialogs, clipboard
+                "java.logging",
+                "java.naming",      // Bouncy Castle provider lookup
+                "java.security.jgss",
+                "java.instrument",
+                "jdk.unsupported"   // sun.misc.Unsafe, used by Skia bindings
+            )
+
+            windows {
+                menu = true
+                shortcut = true
+                dirChooser = true
+                // Fixed UUID: without it, jpackage generates a new upgrade code on
+                // every build and Windows treats each version as a separate product,
+                // leaving old installs behind rather than upgrading them.
+                upgradeUuid = "6E7A1C42-9B3D-4F81-A0C5-2D8E7F41B903"
+            }
+
+            linux {
+                packageName = "sentinelx"
+                menuGroup = "Utility"
+            }
         }
     }
 }

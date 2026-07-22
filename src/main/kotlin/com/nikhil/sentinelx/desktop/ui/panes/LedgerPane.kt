@@ -21,10 +21,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.AccountEntity
+import com.nikhil.sentinelx.desktop.core.format.CsvExport
 import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
+import java.awt.FileDialog
+import java.awt.Frame
+import java.io.File
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -67,10 +71,16 @@ fun LedgerPane(state: AppState) {
     var creatingTx by remember { mutableStateOf(false) }
     var editingAccount by remember { mutableStateOf<AccountEntity?>(null) }
     var creatingAccount by remember { mutableStateOf(false) }
+    var exportCsv by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         PaneHeader("Ledger", "${allTx.size} transactions across ${accounts.size} accounts") {
+            if (transactions.isNotEmpty()) {
+                TextButton(onClick = { exportCsv = true }) {
+                    Text("EXPORT CSV", color = TextSubtle, fontSize = 11.sp, letterSpacing = 1.sp)
+                }
+            }
             TextButton(onClick = { creatingAccount = true }) {
                 Text("+ ACCOUNT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
@@ -139,8 +149,90 @@ fun LedgerPane(state: AppState) {
 
     if (creatingTx) TransactionEditor(state, null, active) { creatingTx = false }
     editingTx?.let { t -> TransactionEditor(state, t, active) { editingTx = null } }
+    if (exportCsv) {
+        CsvExportDialog(transactions, accounts) { exportCsv = false }
+    }
     if (creatingAccount) AccountEditor(state, null) { creatingAccount = false }
     editingAccount?.let { a -> AccountEditor(state, a) { editingAccount = null } }
+}
+
+
+/**
+ * Confirms a CSV export, stating plainly that the file is NOT encrypted.
+ *
+ * Everything else this app writes is sealed. Letting a user drop their entire
+ * financial history into Downloads as readable text without saying so would be a
+ * failure of the software, not of the user.
+ */
+@Composable
+private fun CsvExportDialog(
+    transactions: List<TransactionEntity>,
+    accounts: List<AccountEntity>,
+    onClose: () -> Unit
+) {
+    var done by remember { mutableStateOf<String?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = BackgroundDeep,
+        shape = RoundedCornerShape(18.dp),
+        title = {
+            Text(
+                if (done == null) "EXPORT CSV" else "EXPORTED",
+                color = GoldTarnished, fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 2.sp
+            )
+        },
+        text = {
+            Column(Modifier.width(400.dp)) {
+                if (done != null) {
+                    Text("Saved to:", color = TextSubtle, fontSize = 12.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(done!!, color = GoldIce, fontSize = 11.sp)
+                } else {
+                    Text(
+                        "${transactions.size} transaction(s) will be written as plain text.",
+                        color = TextSubtle, fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "\u26a0 This file is NOT encrypted. Anyone with access to it can read " +
+                            "your full transaction history. Only the ledger is exportable \u2014 " +
+                            "passwords and card secrets are never written to CSV.",
+                        color = AmberWarn, fontSize = 11.sp, lineHeight = 16.sp
+                    )
+                    failure?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = ExpenseRed, fontSize = 11.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (done != null) {
+                TextButton(onClick = onClose) { Text("DONE", color = CyanGlow, fontWeight = FontWeight.Bold) }
+            } else {
+                TextButton(onClick = {
+                    val dialog = FileDialog(null as Frame?, "Save CSV", FileDialog.SAVE)
+                    dialog.file = "sentinelx_ledger_${System.currentTimeMillis()}.csv"
+                    dialog.isVisible = true
+                    val dir = dialog.directory
+                    val name = dialog.file
+                    if (dir != null && name != null) {
+                        val target = File(dir, if (name.endsWith(".csv")) name else "$name.csv")
+                        runCatching { CsvExport.ledger(target, transactions, accounts) }
+                            .onSuccess { done = target.absolutePath }
+                            .onFailure { failure = it.message ?: "Could not write the file." }
+                    }
+                }) {
+                    Text("CHOOSE LOCATION\u2026", color = CyanGlow, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        dismissButton = {
+            if (done == null) TextButton(onClick = onClose) { Text("CANCEL", color = TextMuted) }
+        }
+    )
 }
 
 private fun List<TransactionEntity>.netBalance(): Double =

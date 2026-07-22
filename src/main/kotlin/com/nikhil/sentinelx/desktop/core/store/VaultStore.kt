@@ -149,6 +149,39 @@ class VaultStore(private val dir: File) {
             return removed
         }
 
+        // ── Sidecar data ──────────────────────────────────────────────────────
+        //
+        // Desktop-only state that must NOT reach the .sxv archive: favourites,
+        // preferences, anything the phone's schema has no field for. Adding these
+        // to MasterBackup would change the wire format and break compatibility, and
+        // Gson would silently drop them on the phone anyway.
+        //
+        // Encrypted like everything else — a favourites list still reveals which
+        // accounts matter most to you.
+
+        fun readSidecar(name: String): ByteArray? {
+            requireOpen()
+            val file = sidecarFile(name)
+            return if (file.isFile) LocalCrypto.openDocument(file.readBytes(), key) else null
+        }
+
+        fun writeSidecar(name: String, bytes: ByteArray) {
+            requireOpen()
+            dir.mkdirs()
+            val sealed = LocalCrypto.sealDocument(bytes, key, salt)
+            val temp = File(dir, "$name.side.tmp")
+            temp.writeBytes(sealed)
+            if (!temp.renameTo(sidecarFile(name))) {
+                temp.copyTo(sidecarFile(name), overwrite = true)
+                temp.delete()
+            }
+        }
+
+        private fun sidecarFile(name: String): File {
+            require(name.all { it.isLetterOrDigit() || it == '_' }) { "Unsafe sidecar name: $name" }
+            return File(dir, "$name.side")
+        }
+
         // ── Versions ──────────────────────────────────────────────────────────
 
         private fun snapshot() {

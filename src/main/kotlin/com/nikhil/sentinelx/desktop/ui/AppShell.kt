@@ -32,6 +32,7 @@ import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.ui.components.CommandPalette
 import com.nikhil.sentinelx.desktop.ui.components.GemCard
+import com.nikhil.sentinelx.desktop.ui.components.HistoryDialog
 import com.nikhil.sentinelx.desktop.ui.components.Pill
 import com.nikhil.sentinelx.desktop.ui.components.buildIndex
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
@@ -140,6 +141,7 @@ private fun Sidebar(state: AppState) {
 
         SidebarAction("Import Migration Seal") { ImportDialogHost(state) }
         SidebarAction("Export Migration Seal") { ExportDialogHost(state) }
+        SidebarAction("Version History") { HistoryDialog(state, onClose = it) }
         SidebarTextButton("Lock Vault") { state.lock() }
     }
 }

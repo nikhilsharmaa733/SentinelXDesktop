@@ -6,10 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -23,6 +21,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nikhil.sentinelx.desktop.core.audit.AuditFinding
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.core.audit.Strength
 import com.nikhil.sentinelx.desktop.core.format.LoginEntity
@@ -31,129 +30,140 @@ import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
 /**
- * Logins, as a desktop master/detail rather than the phone's drill-down.
+ * Logins, grouped by site — matching the phone, where `groupedLogins` is
+ * `groupBy { it.siteName }` and the detail screen receives every entry for a site.
  *
- * The list stays on screen while you read an entry, so comparing two accounts or
- * scanning down a site's credentials takes no navigation at all. That is the whole
- * argument for the layout — it is not decoration.
+ * A flat list was wrong: four Google accounts took four rows and read as four
+ * unrelated services. Grouping also makes the desktop layout pay off properly — the
+ * phone needs two screens to go site → accounts, whereas here the site list stays on
+ * the left while every account for the selected site is stacked on the right.
  */
 @Composable
 fun LoginsPane(state: AppState) {
     var query by remember { mutableStateOf("") }
-    var selectedId by remember { mutableStateOf<Int?>(null) }
-
-    val logins = state.backup.logins
-    val filtered = remember(logins, query) {
-        if (query.isBlank()) logins
-        else logins.filter {
-            it.siteName.contains(query, true) || it.username.contains(query, true)
-        }
-    }.sortedWith(
-        // Favourites float to the top, then alphabetical. The whole point of
-        // pinning is that the entries you reach for daily stop needing a search.
-        compareByDescending<LoginEntity> { state.isFavourite(state.favouriteKey("login", it.siteName)) }
-            .thenBy { it.siteName.lowercase() }
-    )
-
-    // Findings are keyed by id so the detail pane can show why an entry is flagged.
-    val findings = remember(logins) { PasswordAudit.run(logins).associateBy { it.login.id } }
-
-    val selected = filtered.firstOrNull { it.id == selectedId }
-        ?: filtered.firstOrNull().also { selectedId = it?.id }
-
+    var selectedSite by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<LoginEntity?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var prefillSite by remember { mutableStateOf<String?>(null) }
+
+    val logins = state.backup.logins
+    val findings = remember(logins) { PasswordAudit.run(logins).associateBy { it.login.id } }
+
+    // A site matches if its NAME matches, or if any of its usernames do — otherwise
+    // searching for an email address would hide the very site that holds it.
+    val grouped: List<Pair<String, List<LoginEntity>>> = remember(logins, query, state.favourites) {
+        logins.groupBy { it.siteName }
+            .filter { (site, entries) ->
+                query.isBlank() ||
+                    site.contains(query, true) ||
+                    entries.any { it.username.contains(query, true) }
+            }
+            .toList()
+            .sortedWith(
+                compareByDescending<Pair<String, List<LoginEntity>>> {
+                    state.isFavourite(state.favouriteKey("login", it.first))
+                }.thenBy { it.first.lowercase() }
+            )
+    }
+
+    val selected = grouped.firstOrNull { it.first == selectedSite }
+        ?: grouped.firstOrNull().also { selectedSite = it?.first }
 
     Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize()) {
-        PaneHeader("Logins", "${logins.size} records") {
-            val score = remember(logins) { PasswordAudit.score(logins) }
-            if (logins.isNotEmpty()) {
-                Pill(
-                    "HEALTH $score%",
-                    when {
-                        score >= 85 -> IncomeGreen
-                        score >= 60 -> AmberWarn
-                        else -> ExpenseRed
-                    }
-                )
-            }
-        }
-
-        Row(Modifier.fillMaxSize()) {
-            // ── List ──────────────────────────────────────────────────────────
-            Column(
-                Modifier
-                    .width(320.dp)
-                    .fillMaxHeight()
-                    .background(BackgroundVoid.copy(0.5f))
-                    .padding(horizontal = 18.dp)
+        Column(Modifier.fillMaxSize()) {
+            PaneHeader(
+                title = "Logins",
+                subtitle = "${logins.size} records across ${logins.map { it.siteName }.distinct().size} sites"
             ) {
-                SearchField(query, { query = it }, "Search site or username")
-                Spacer(Modifier.height(12.dp))
-
-                if (filtered.isEmpty()) {
-                    EmptyState(
-                        "ᛗ",
-                        if (logins.isEmpty()) "NO LOGINS" else "NO MATCHES",
-                        if (logins.isEmpty()) "Import a Migration Seal to begin" else "Try a different search"
-                    )
-                } else {
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        items(filtered, key = { it.id }) { login ->
-                            val favKey = state.favouriteKey("login", login.siteName)
-                            LoginRow(
-                                login = login,
-                                selected = login.id == selectedId,
-                                flagged = findings[login.id] != null,
-                                favourite = state.isFavourite(favKey),
-                                onToggleFavourite = { state.toggleFavourite(favKey) },
-                                onClick = { selectedId = login.id }
-                            )
+                val score = remember(logins) { PasswordAudit.score(logins) }
+                if (logins.isNotEmpty()) {
+                    Pill(
+                        "HEALTH $score%",
+                        when {
+                            score >= 85 -> IncomeGreen
+                            score >= 60 -> AmberWarn
+                            else -> ExpenseRed
                         }
-                        item { Spacer(Modifier.height(20.dp)) }
+                    )
+                }
+            }
+
+            Row(Modifier.fillMaxSize()) {
+                // ── Site list ─────────────────────────────────────────────────
+                Column(
+                    Modifier.width(320.dp).fillMaxHeight()
+                        .background(BackgroundVoid.copy(0.4f))
+                        .padding(horizontal = 18.dp)
+                ) {
+                    SearchField(query, { query = it }, "Search site or username")
+                    Spacer(Modifier.height(12.dp))
+
+                    if (grouped.isEmpty()) {
+                        EmptyState(
+                            "ᛗ",
+                            if (logins.isEmpty()) "NO LOGINS" else "NO MATCHES",
+                            if (logins.isEmpty()) "Import a Migration Seal to begin" else "Try a different search"
+                        )
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(grouped, key = { it.first }) { (site, entries) ->
+                                val favKey = state.favouriteKey("login", site)
+                                SiteRow(
+                                    site = site,
+                                    entries = entries,
+                                    selected = site == selectedSite,
+                                    flagged = entries.any { findings[it.id] != null },
+                                    favourite = state.isFavourite(favKey),
+                                    onToggleFavourite = { state.toggleFavourite(favKey) },
+                                    onClick = { selectedSite = site }
+                                )
+                            }
+                            item { Spacer(Modifier.height(20.dp)) }
+                        }
+                    }
+                }
+
+                // ── Every account for the selected site ───────────────────────
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    if (selected == null) {
+                        EmptyState("ᛗ", "NOTHING SELECTED", "Choose a site from the list")
+                    } else {
+                        SiteDetail(
+                            site = selected.first,
+                            entries = selected.second,
+                            findings = findings,
+                            onEdit = { editing = it },
+                            onAddAnother = { prefillSite = selected.first; creating = true }
+                        )
                     }
                 }
             }
-
-            // ── Detail ────────────────────────────────────────────────────────
-            Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
-                if (selected == null) {
-                    EmptyState("ᛗ", "NOTHING SELECTED", "Choose a login from the list")
-                } else {
-                    LoginDetail(
-                        login = selected,
-                        sharedWith = findings[selected.id]?.sharedWith.orEmpty(),
-                        onEdit = { editing = selected }
-                    )
-                }
-            }
         }
-    }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-            AddButton(onClick = { creating = true })
+            AddButton(onClick = { prefillSite = null; creating = true })
         }
     }
 
-    if (creating) LoginEditor(state, null) { creating = false }
-    editing?.let { target -> LoginEditor(state, target) { editing = null } }
+    if (creating) {
+        LoginEditor(state, null, prefillSite) { creating = false; prefillSite = null }
+    }
+    editing?.let { target -> LoginEditor(state, target, null) { editing = null } }
 }
 
 @Composable
-private fun LoginRow(
-    login: LoginEntity,
+private fun SiteRow(
+    site: String,
+    entries: List<LoginEntity>,
     selected: Boolean,
     flagged: Boolean,
     favourite: Boolean,
     onToggleFavourite: () -> Unit,
     onClick: () -> Unit
 ) {
-    val accent = accentFor(login.siteName)
+    val accent = accentFor(site)
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
+        Modifier.fillMaxWidth().padding(vertical = 3.dp)
             .clip(RoundedCornerShape(12.dp))
             .rowSurface(selected)
             .clickable { onClick() }
@@ -167,23 +177,35 @@ private fun LoginRow(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                login.siteName.take(1).uppercase(),
-                color = accent,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Black,
-                fontFamily = FontFamily.Serif
+                site.take(1).uppercase(),
+                color = accent, fontSize = 15.sp,
+                fontWeight = FontWeight.Black, fontFamily = FontFamily.Serif
             )
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                login.siteName,
+                site,
                 color = if (selected) GoldIce else TextParchment,
                 fontSize = 13.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 maxLines = 1
             )
-            Text(login.username, color = TextMuted, fontSize = 11.sp, maxLines = 1)
+            Text(
+                // One account shows its username; several show a count, since
+                // listing them all would overflow the row anyway.
+                if (entries.size == 1) entries.first().username else "${entries.size} accounts",
+                color = TextMuted, fontSize = 11.sp, maxLines = 1
+            )
+        }
+        if (entries.size > 1) {
+            Box(
+                Modifier.clip(CircleShape).background(accent.copy(0.15f))
+                    .padding(horizontal = 7.dp, vertical = 2.dp)
+            ) {
+                Text("${entries.size}", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(6.dp))
         }
         if (flagged) {
             Box(Modifier.size(6.dp).clip(CircleShape).background(AmberWarn))
@@ -199,113 +221,124 @@ private fun LoginRow(
 }
 
 @Composable
-private fun LoginDetail(login: LoginEntity, sharedWith: List<String>, onEdit: () -> Unit) {
-    var revealed by remember(login.id) { mutableStateOf(false) }
-    val accent = accentFor(login.siteName)
-    val strength = remember(login.password) { Strength.of(login.password) }
+private fun SiteDetail(
+    site: String,
+    entries: List<LoginEntity>,
+    findings: Map<Int, AuditFinding>,
+    onEdit: (LoginEntity) -> Unit,
+    onAddAnother: () -> Unit
+) {
+    val accent = accentFor(site)
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Box(
-                Modifier.size(52.dp).clip(CircleShape)
-                    .background(accent.copy(0.14f))
-                    .border(1.dp, accent.copy(0.4f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    login.siteName.take(1).uppercase(),
-                    color = accent,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.Serif
-                )
-            }
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(
-                    login.siteName,
-                    color = GoldIce,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.Serif
-                )
-                Text("LOGIN RECORD", color = TextMuted, fontSize = 9.sp, letterSpacing = 3.sp)
-            }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onEdit) {
-                Text("EDIT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            }
-        }
-
-        Spacer(Modifier.height(26.dp))
-
-        FieldCard("USERNAME", login.username, accent, copyLabel = "username")
-
-        Spacer(Modifier.height(12.dp))
-
-        GemCard(accent = CyanGlow, modifier = Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("PASSWORD", color = CyanGlow, fontSize = 9.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                StrengthBars(strength)
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (revealed) login.password else "•".repeat(login.password.length.coerceAtMost(18)),
-                    color = TextParchment,
-                    fontSize = 15.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = { revealed = !revealed }) {
-                    Icon(
-                        if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (revealed) "Hide" else "Reveal",
-                        tint = TextSubtle,
-                        modifier = Modifier.size(17.dp)
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 28.dp)) {
+        item {
+            Spacer(Modifier.height(24.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(52.dp).clip(CircleShape)
+                        .background(accent.copy(0.14f))
+                        .border(1.dp, accent.copy(0.4f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        site.take(1).uppercase(),
+                        color = accent, fontSize = 24.sp,
+                        fontWeight = FontWeight.Black, fontFamily = FontFamily.Serif
                     )
                 }
-                CopyButton(login.password, "password", CyanGlow)
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        site,
+                        color = GoldIce, fontSize = 24.sp,
+                        fontWeight = FontWeight.Black, fontFamily = FontFamily.Serif
+                    )
+                    Text(
+                        "${entries.size} ACCOUNT${if (entries.size == 1) "" else "S"}",
+                        color = TextMuted, fontSize = 9.sp, letterSpacing = 3.sp
+                    )
+                }
+                TextButton(onClick = onAddAnother) {
+                    Text(
+                        "+ ADD ACCOUNT", color = CyanGlow, fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+                    )
+                }
             }
+            Spacer(Modifier.height(20.dp))
         }
 
-        if (sharedWith.isNotEmpty()) {
+        // Every account for this site, stacked. The phone needs a second screen to
+        // reach these; here they are all visible at once.
+        items(entries, key = { it.id }) { login ->
+            AccountCard(
+                login = login,
+                accent = accent,
+                sharedWith = findings[login.id]?.sharedWith.orEmpty(),
+                onEdit = { onEdit(login) }
+            )
             Spacer(Modifier.height(14.dp))
-            GemCard(accent = ExpenseRed, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    "REUSED PASSWORD",
-                    color = ExpenseRed,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.sp
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "This password is also used for ${sharedWith.joinToString(", ")}. " +
-                        "A breach at any one of them exposes all of them.",
-                    color = TextSubtle,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
-                )
-            }
         }
+
+        item { Spacer(Modifier.height(28.dp)) }
     }
 }
 
 @Composable
-private fun FieldCard(label: String, value: String, accent: Color, copyLabel: String) {
+private fun AccountCard(
+    login: LoginEntity,
+    accent: Color,
+    sharedWith: List<String>,
+    onEdit: () -> Unit
+) {
+    var revealed by remember(login.id) { mutableStateOf(false) }
+    val strength = remember(login.password) { Strength.of(login.password) }
+
     GemCard(accent = accent, modifier = Modifier.fillMaxWidth()) {
-        Text(label, color = accent, fontSize = 9.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("USERNAME", color = accent, fontSize = 8.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(5.dp))
+                Text(login.username.ifBlank { "—" }, color = TextParchment, fontSize = 15.sp)
+            }
+            if (login.username.isNotBlank()) CopyButton(login.username, "username", accent)
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onEdit) {
+                Text("EDIT", color = CyanGlow, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("PASSWORD", color = CyanGlow, fontSize = 8.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            StrengthBars(strength)
+        }
+        Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                value.ifBlank { "—" },
-                color = TextParchment,
-                fontSize = 15.sp,
-                modifier = Modifier.weight(1f)
+                if (revealed) login.password else "•".repeat(login.password.length.coerceAtMost(18)),
+                color = TextParchment, fontSize = 15.sp,
+                fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f)
             )
-            if (value.isNotBlank()) CopyButton(value, copyLabel, accent)
+            IconButton(onClick = { revealed = !revealed }) {
+                Icon(
+                    if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    contentDescription = if (revealed) "Hide" else "Reveal",
+                    tint = TextSubtle, modifier = Modifier.size(16.dp)
+                )
+            }
+            CopyButton(login.password, "password", CyanGlow)
+        }
+
+        if (sharedWith.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "⚠ Reused — also on ${sharedWith.joinToString(", ")}. A breach at any one " +
+                    "of them exposes all of them.",
+                color = ExpenseRed, fontSize = 11.sp, lineHeight = 16.sp
+            )
         }
     }
 }
@@ -322,10 +355,7 @@ private fun StrengthBars(strength: Strength) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         repeat(4) { i ->
             Box(
-                Modifier
-                    .padding(end = 3.dp)
-                    .width(16.dp)
-                    .height(3.dp)
+                Modifier.padding(end = 3.dp).width(16.dp).height(3.dp)
                     .clip(RoundedCornerShape(2.dp))
                     .background(if (i < strength.bars) color else SurfaceElevated)
             )

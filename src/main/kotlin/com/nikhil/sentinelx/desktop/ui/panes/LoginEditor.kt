@@ -32,9 +32,16 @@ import com.nikhil.sentinelx.desktop.ui.theme.*
 fun LoginEditor(
     state: AppState,
     existing: LoginEntity?,
+    /**
+     * Pre-fills the site when adding another account to one that already exists.
+     * Mirrors the phone's `prefillSiteName`, and matters more here because logins
+     * are grouped by site — a typo would silently create a second group rather
+     * than joining the existing one.
+     */
+    prefillSite: String? = null,
     onClose: () -> Unit
 ) {
-    var site by remember { mutableStateOf(existing?.siteName ?: "") }
+    var site by remember { mutableStateOf(existing?.siteName ?: prefillSite ?: "") }
     var user by remember { mutableStateOf(existing?.username ?: "") }
     var password by remember { mutableStateOf(existing?.password ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -67,6 +74,24 @@ fun LoginEditor(
         onDelete = existing?.let { { confirmDelete = true } }
     ) {
         EditorField(site, { site = it }, "Site", placeholder = "Github")
+
+        // Near-miss warning. Site names are title-cased on save, so "github" and
+        // "GitHub" collapse — but "Git hub" would silently become its own group.
+        val nearMatch = remember(site, state.backup.logins) {
+            val trimmed = site.trim()
+            if (trimmed.length < 3) null
+            else state.backup.logins.map { it.siteName }.distinct().firstOrNull { existingSite ->
+                !existingSite.equals(trimmed, true) &&
+                    existingSite.replace(" ", "").equals(trimmed.replace(" ", ""), true)
+            }
+        }
+        if (nearMatch != null && existing == null) {
+            Text(
+                "Did you mean \"$nearMatch\"? Otherwise this becomes a separate group.",
+                color = AmberWarn, fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
+        }
         EditorField(user, { user = it }, "Username", placeholder = "you@example.com")
 
         EditorField(

@@ -141,16 +141,18 @@ compose.desktop {
         mainClass = "com.nikhil.sentinelx.desktop.MainKt"
 
         nativeDistributions {
-            // Msi/Exe are produced only when jpackage runs ON Windows; Deb/Rpm only on
-            // Linux. jpackage cannot cross-compile, so each host builds the ones it can.
-            // Both OSes' packages are built in CI (.github/workflows/release.yml) — this
-            // Linux machine can never emit the Windows ones, and vice versa.
-            targetFormats(
-                TargetFormat.Msi, TargetFormat.Exe,   // Windows
-                TargetFormat.Deb, TargetFormat.Rpm,   // Linux installers
-                TargetFormat.AppImage,                // Linux portable app-image (tar'd in CI)
-                TargetFormat.Dmg                      // macOS
-            )
+            // Declare only the formats valid for the host doing the build. jpackage can't
+            // cross-compile anyway, so a Windows box never needs Deb, and — critically —
+            // macOS REJECTS AppImage in the list at configuration time ("Unexpected target
+            // format for MacOS: AppImage"), which fails the build before it starts. Each
+            // CI runner therefore sees only the formats it can actually produce.
+            val hostOs = System.getProperty("os.name").lowercase()
+            val hostTargets = when {
+                hostOs.contains("win") -> listOf(TargetFormat.Msi, TargetFormat.Exe)
+                hostOs.contains("mac") -> listOf(TargetFormat.Dmg)
+                else -> listOf(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
+            }
+            targetFormats(*hostTargets.toTypedArray())
             packageName = "SentinelX"
             packageVersion = "1.0.2"
             description = "Offline personal vault"

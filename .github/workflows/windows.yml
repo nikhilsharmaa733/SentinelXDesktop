@@ -1,6 +1,7 @@
 name: Windows installer
 
-# Builds the Windows .msi and .exe on a GitHub-hosted Windows runner.
+# Builds the Windows .msi and .exe on a GitHub-hosted Windows runner, and — on a
+# version tag — publishes them as a public GitHub Release anyone can download.
 #
 # WHY THIS EXISTS
 # jpackage cannot cross-compile — it only builds installers for the OS it runs on.
@@ -9,16 +10,23 @@ name: Windows installer
 # do the one thing the Linux box can't.
 #
 # HOW TO GET THE FILES
-#   1. Actions tab → "Windows installer" → "Run workflow"  (manual build)
-#      …or push a tag like v1.0.0, which triggers it automatically.
-#   2. When it finishes, open the run → "Artifacts" → download
-#      "SentinelX-windows-installers" (a zip with the .msi and .exe inside).
+#   • Test build:   Actions tab → "Windows installer" → "Run workflow".
+#                   Result lands under the run's "Artifacts" (expires in 90 days,
+#                   needs a GitHub login to download).
+#   • Public release: push a version tag and it builds AND creates a Release:
+#                       git tag v1.0.0
+#                       git push origin v1.0.0
+#                   The .msi/.exe then live at /releases as permanent public
+#                   download links — no login, no expiry (repo must be public).
 
 on:
-  workflow_dispatch:        # build on demand from the Actions tab
+  workflow_dispatch:        # manual test build → Artifacts only
   push:
     tags:
-      - 'v*'                # …and automatically on a version tag (v1.0.0, v1.1.0, …)
+      - 'v*'                # version tag → build + public Release
+
+permissions:
+  contents: write           # required to create a Release and attach the installers
 
 jobs:
   build-windows:
@@ -47,7 +55,9 @@ jobs:
       - name: Build MSI and EXE
         run: .\gradlew.bat packageMsi packageExe --no-daemon --stacktrace
 
-      - name: Upload installers
+      # Always available from the run's Artifacts tab — handy for a manual test build
+      # before cutting a tagged release.
+      - name: Upload installers as build artifact
         uses: actions/upload-artifact@v4
         with:
           name: SentinelX-windows-installers
@@ -55,3 +65,17 @@ jobs:
             build/compose/binaries/main/msi/*.msi
             build/compose/binaries/main/exe/*.exe
           if-no-files-found: error
+
+      # On a version tag only: publish a public Release with the installers attached.
+      # Uses the gh CLI preinstalled on the runner (no third-party action), authed with
+      # the automatic GITHUB_TOKEN. Anyone can then download from the Releases page.
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $msi = Get-ChildItem build/compose/binaries/main/msi/*.msi
+          $exe = Get-ChildItem build/compose/binaries/main/exe/*.exe
+          gh release create $env:GITHUB_REF_NAME $msi.FullName $exe.FullName `
+            --title "SentinelX $env:GITHUB_REF_NAME" `
+            --generate-notes

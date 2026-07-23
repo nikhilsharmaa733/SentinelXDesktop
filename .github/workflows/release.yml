@@ -100,17 +100,13 @@ jobs:
             SentinelX-linux-x64.tar.gz
           if-no-files-found: error
 
-  # ── macOS: .dmg for Apple Silicon + Intel ───────────────────────────────────────
+  # ── macOS: .dmg (Apple Silicon) ─────────────────────────────────────────────────
+  # arm64 only, on purpose. It covers every Mac since 2020 — including the M4 Pro —
+  # and GitHub's Intel (macos-13) runners queue unpredictably, which would stall the
+  # release job that waits on this one. Re-add an Intel leg only if an actual Intel-Mac
+  # user needs it; an arm64 .dmg cannot run on Intel, so it isn't a substitute.
   macos:
-    strategy:
-      fail-fast: false        # one arch failing must not cancel the other
-      matrix:
-        include:
-          - runner: macos-14  # Apple Silicon (arm64) — every M-series Mac, incl. the M4 Pro
-            arch: arm64
-          - runner: macos-13  # Intel (x86_64) — pre-2020 Macs
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14   # Apple Silicon (arm64)
     steps:
       - uses: actions/checkout@v4
 
@@ -124,18 +120,17 @@ jobs:
       - name: Build DMG
         run: ./gradlew packageDmg --no-daemon --stacktrace
 
-      # A build on an arm64 runner produces an arm64-only app and vice versa, yet
-      # jpackage names both "SentinelX-<version>.dmg". Tag the arch into the filename
-      # so the two release assets stay distinct instead of overwriting each other.
-      - name: Tag the DMG with its architecture
+      # jpackage names it plainly "SentinelX-<version>.dmg"; tag the arch into the name
+      # so a future Intel build can't collide with it as a release asset.
+      - name: Tag the DMG as arm64
         run: |
           dmg=$(ls build/compose/binaries/main/dmg/*.dmg | head -1)
-          mv "$dmg" "$(dirname "$dmg")/$(basename "$dmg" .dmg)-${{ matrix.arch }}.dmg"
+          mv "$dmg" "$(dirname "$dmg")/$(basename "$dmg" .dmg)-arm64.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}
+          name: macos-arm64
           path: build/compose/binaries/main/dmg/*.dmg
           if-no-files-found: error
 

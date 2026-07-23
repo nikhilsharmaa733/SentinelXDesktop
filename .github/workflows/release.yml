@@ -118,7 +118,10 @@ jobs:
           assets=()
           for f in dist/**/*; do [ -f "$f" ] && assets+=("$f"); done
           echo "Attaching ${#assets[@]} files:"; printf ' - %s\n' "${assets[@]}"
+          # --repo is required: this job does not check out the repo (it only needs the
+          # downloaded artifacts), so gh has no local .git to infer the repository from.
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "SentinelX $GITHUB_REF_NAME" \
             --generate-notes \
             "${assets[@]}"

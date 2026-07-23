@@ -121,14 +121,27 @@ fun LedgerPane(state: AppState) {
                 if (allTx.isEmpty()) {
                     EmptyState("ᚢ", "NO TRANSACTIONS", "Import a Migration Seal to begin")
                 } else {
-                    LedgerSummary(transactions)
+                    // NET/IN/OUT and the search box stay pinned; the transaction list and
+                    // the category breakdown live in the scroll region below them.
+                    //
+                    // The list MUST be weight(1f), never fillMaxSize(): an unweighted
+                    // "fill" child in a Column is handed the whole column height and gets
+                    // placed *after* the summary, so its entire body falls off the bottom
+                    // of the window — which is why only the summary and category card were
+                    // visible. weight(1f) gives it exactly the space that remains.
+                    LedgerSummaryTiles(transactions)
                     Spacer(Modifier.height(16.dp))
                     SearchField(query, { query = it }, "Search transactions")
                     Spacer(Modifier.height(12.dp))
                     if (transactions.isEmpty()) {
                         EmptyState("ᚢ", "NO MATCHES", "Try a different search")
                     } else {
-                        LazyColumn(Modifier.fillMaxSize()) {
+                        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                            item {
+                                BalanceTrendGraph(transactions)
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            item { CategoryBreakdown(transactions) }
                             items(transactions, key = { it.id }) { tx ->
                                 TransactionRow(tx) { editingTx = tx }
                             }
@@ -287,8 +300,9 @@ private fun AccountRow(
     }
 }
 
+/** NET / IN / OUT tiles. Pinned above the scrolling transaction list. */
 @Composable
-private fun LedgerSummary(transactions: List<TransactionEntity>) {
+private fun LedgerSummaryTiles(transactions: List<TransactionEntity>) {
     val income = transactions.filter { it.isIncoming }.sumOf { it.amount }
     val expense = transactions.filter { !it.isIncoming }.sumOf { it.amount }
     val net = income - expense
@@ -300,9 +314,18 @@ private fun LedgerSummary(transactions: List<TransactionEntity>) {
         Spacer(Modifier.width(12.dp))
         SummaryTile("OUT", expense, ExpenseRed, Modifier.weight(1f))
     }
+}
 
-    // Category breakdown across the visible transactions — the phone's Wealth Vision
-    // is cramped into a phone width; here the bars are actually comparable.
+/**
+ * Category breakdown across the visible transactions — the phone's Wealth Vision
+ * is cramped into a phone width; here the bars are actually comparable.
+ *
+ * Lives inside the transaction LazyColumn as its first item, so it scrolls with the
+ * list rather than competing with it for fixed vertical space.
+ */
+@Composable
+private fun CategoryBreakdown(transactions: List<TransactionEntity>) {
+    val expense = transactions.filter { !it.isIncoming }.sumOf { it.amount }
     val byCategory = transactions.filter { !it.isIncoming }
         .groupBy { it.category.ifBlank { "MISC" } }
         .mapValues { (_, txs) -> txs.sumOf { it.amount } }
@@ -310,36 +333,38 @@ private fun LedgerSummary(transactions: List<TransactionEntity>) {
         .take(6)
 
     if (byCategory.isNotEmpty() && expense > 0) {
-        Spacer(Modifier.height(14.dp))
-        GemCard(accent = AmberWarn, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                "SPENDING BY CATEGORY",
-                color = AmberWarn, fontSize = 9.sp,
-                letterSpacing = 2.sp, fontWeight = FontWeight.Bold
-            )
-            Spacer(Modifier.height(12.dp))
-            byCategory.forEach { (category, amount) ->
-                val fraction = (amount / expense).toFloat().coerceIn(0f, 1f)
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 7.dp)) {
-                    Text(category, color = TextSubtle, fontSize = 11.sp, modifier = Modifier.width(110.dp))
-                    Box(
-                        Modifier.weight(1f).height(7.dp)
-                            .clip(RoundedCornerShape(4.dp)).background(SurfaceElevated)
-                    ) {
+        Column {
+            GemCard(accent = AmberWarn, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "SPENDING BY CATEGORY",
+                    color = AmberWarn, fontSize = 9.sp,
+                    letterSpacing = 2.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(12.dp))
+                byCategory.forEach { (category, amount) ->
+                    val fraction = (amount / expense).toFloat().coerceIn(0f, 1f)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 7.dp)) {
+                        Text(category, color = TextSubtle, fontSize = 11.sp, modifier = Modifier.width(110.dp))
                         Box(
-                            Modifier.fillMaxWidth(fraction).fillMaxHeight()
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Brush.horizontalGradient(listOf(AmberWarn, GoldTarnished)))
+                            Modifier.weight(1f).height(7.dp)
+                                .clip(RoundedCornerShape(4.dp)).background(SurfaceElevated)
+                        ) {
+                            Box(
+                                Modifier.fillMaxWidth(fraction).fillMaxHeight()
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Brush.horizontalGradient(listOf(AmberWarn, GoldTarnished)))
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            formatMoney(amount),
+                            color = TextParchment, fontSize = 11.sp,
+                            modifier = Modifier.width(96.dp)
                         )
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        formatMoney(amount),
-                        color = TextParchment, fontSize = 11.sp,
-                        modifier = Modifier.width(96.dp)
-                    )
                 }
             }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }

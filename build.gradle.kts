@@ -141,9 +141,11 @@ compose.desktop {
         mainClass = "com.nikhil.sentinelx.desktop.MainKt"
 
         nativeDistributions {
-            // Msi is produced only when jpackage runs ON Windows; Deb only on Linux.
-            // jpackage cannot cross-compile, so each host builds the one it can.
-            targetFormats(TargetFormat.Msi, TargetFormat.Deb, TargetFormat.AppImage)
+            // Msi and Exe are produced only when jpackage runs ON Windows; Deb only on
+            // Linux. jpackage cannot cross-compile, so each host builds the ones it can.
+            // The Windows installers are built in CI (.github/workflows/windows.yml) on a
+            // Windows runner — this Linux machine can never emit them.
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "SentinelX"
             packageVersion = "1.0.0"
             description = "Offline personal vault"

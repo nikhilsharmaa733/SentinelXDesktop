@@ -38,9 +38,10 @@ mitigate, but do not eliminate, these.
 ./gradlew packageDeb     # Linux installer  → build/compose/binaries/main/deb/
 ```
 
-**Windows installers** are built in CI — see `.github/workflows/windows.yml`. `jpackage`
-cannot cross-compile, so the `.msi`/`.exe` are produced on a Windows runner and downloaded
-from the run's **Artifacts**. Details in [`PACKAGING.md`](PACKAGING.md).
+**Installers for every platform** are built in CI — see `.github/workflows/release.yml`.
+`jpackage` cannot cross-compile, so each OS's packages are produced on its own runner
+(Windows `.msi`/`.exe`, Linux `.deb`/`.rpm`, macOS arm64 `.dmg`) and published to the
+[Releases](../../releases) page on every `v*` tag. Details in [`PACKAGING.md`](PACKAGING.md).
 
 ## Installing on macOS — first launch
 

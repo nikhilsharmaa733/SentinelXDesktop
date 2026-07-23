@@ -1,0 +1,124 @@
+name: Build & Release
+
+# Builds installers for BOTH Windows and Linux, and — on a version tag — publishes
+# them all as a single public GitHub Release anyone can download.
+#
+# WHY TWO BUILD JOBS
+# jpackage cannot cross-compile: it only builds installers for the OS it runs on. So
+# the Windows .msi/.exe must be built on a Windows runner and the Linux .deb/.rpm on a
+# Linux runner. A third job gathers both and attaches them to one release, which also
+# avoids two jobs racing to create the same release.
+#
+# HOW TO GET THE FILES
+#   • Test build:   Actions tab → "Build & Release" → "Run workflow".
+#                   Results land under the run's "Artifacts" (login required, 90-day expiry).
+#   • Public release: push a version tag and everything builds AND is published:
+#                       git tag v1.0.0
+#                       git push origin v1.0.0
+#                   The installers then live at /releases as permanent public download
+#                   links — no login, no expiry (repo must be public to share widely).
+
+on:
+  workflow_dispatch:        # manual test build → Artifacts only
+  push:
+    tags:
+      - 'v*'                # version tag → build + public Release
+
+permissions:
+  contents: write           # required to create a Release and attach the installers
+
+jobs:
+  # ── Windows: .msi + .exe ────────────────────────────────────────────────────────
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # jpackage builds .msi/.exe through WiX Toolset v3, no longer guaranteed to be on
+      # the runner image. Installing it in its own step means the build step gets a
+      # fresh shell with candle.exe / light.exe already on PATH.
+      - name: Install WiX Toolset v3
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Build MSI and EXE
+        run: .\gradlew.bat packageMsi packageExe --no-daemon --stacktrace
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            build/compose/binaries/main/msi/*.msi
+            build/compose/binaries/main/exe/*.exe
+          if-no-files-found: error
+
+  # ── Linux: .deb + .rpm + portable .tar.gz ───────────────────────────────────────
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # jpackage shells out to dpkg-deb (via fakeroot) for .deb and rpmbuild for .rpm.
+      # dpkg-deb is present on the runner; fakeroot and rpm are not.
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y fakeroot rpm
+
+      - name: Build DEB, RPM and app-image
+        run: ./gradlew packageDeb packageRpm packageAppImage --no-daemon --stacktrace
+
+      # The app-image is a self-contained directory (bundled runtime + launcher). Tar it
+      # into one file so distros without .deb/.rpm can just extract and run. The dir name
+      # is derived from the glob rather than hardcoded, so a packageName change can't
+      # silently break this.
+      - name: Package portable tarball
+        run: |
+          APP_DIR=$(ls -d build/compose/binaries/main/app/*/ | head -1)
+          tar -C "$(dirname "$APP_DIR")" -czf SentinelX-linux-x64.tar.gz "$(basename "$APP_DIR")"
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            build/compose/binaries/main/deb/*.deb
+            build/compose/binaries/main/rpm/*.rpm
+            SentinelX-linux-x64.tar.gz
+          if-no-files-found: error
+
+  # ── Release: gather everything, publish one release (tags only) ─────────────────
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist        # dist/windows-installers/*, dist/linux-packages/*
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s globstar nullglob
+          assets=()
+          for f in dist/**/*; do [ -f "$f" ] && assets+=("$f"); done
+          echo "Attaching ${#assets[@]} files:"; printf ' - %s\n' "${assets[@]}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "SentinelX $GITHUB_REF_NAME" \
+            --generate-notes \
+            "${assets[@]}"

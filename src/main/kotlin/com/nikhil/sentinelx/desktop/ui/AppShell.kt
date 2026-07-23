@@ -159,6 +159,7 @@ private fun Sidebar(state: AppState) {
         HorizontalDivider(color = GoldDark.copy(0.15f), modifier = Modifier.padding(horizontal = 16.dp))
         Spacer(Modifier.height(12.dp))
 
+        SidebarAction("Password Generator") { PasswordGeneratorDialog(onClose = it) }
         SidebarAction("Import Migration Seal") { ImportDialogHost(state, onClose = it) }
         SidebarAction("Export Migration Seal") { ExportDialogHost(state, onClose = it) }
         SidebarAction("Version History") { HistoryDialog(state, onClose = it) }

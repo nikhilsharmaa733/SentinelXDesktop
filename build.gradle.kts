@@ -13,7 +13,7 @@ plugins {
 }
 
 group = "com.nikhil.sentinelx.desktop"
-version = "1.0.1"
+version = "1.0.2"
 
 // No jvmToolchain() here on purpose. Requesting a specific toolchain makes Gradle
 // hunt for that exact JDK and fail if it is absent — this machine has only the
@@ -151,7 +151,7 @@ compose.desktop {
                 TargetFormat.AppImage                 // Linux portable app-image (tar'd in CI)
             )
             packageName = "SentinelX"
-            packageVersion = "1.0.1"
+            packageVersion = "1.0.2"
             description = "Offline personal vault"
             vendor = "Nikhil"
             copyright = "© 2026 Nikhil. All rights reserved."

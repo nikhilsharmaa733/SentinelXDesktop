@@ -166,6 +166,27 @@ commercial CA — an annual cost, hard to justify for a personal vault.
 
 Linux has no equivalent gate; a `.deb` installs without complaint.
 
+macOS is stricter than Windows here. jpackage **already ad-hoc signs** the `.app` on
+arm64 (it has to — arm64 refuses to run unsigned code), and that signature is valid:
+`codesign --verify --deep --strict` passes. But an ad-hoc signature carries no Apple
+Developer ID and the app isn't notarized, so Gatekeeper still blocks it on first launch:
+the Dock icon bounces once and quits, with no crash report — Gatekeeper stops it before
+the process really starts. **Adding more ad-hoc signing in CI does not change this** — the
+app is already ad-hoc signed; the block is about notarization, not the signature.
+
+The quarantine flag that triggers the block is applied by the *recipient's* browser at
+download time, so nothing the build does can pre-clear it. Two real options:
+
+- **Document the one-time unblock** (what this repo does — see the "Installing on macOS"
+  section in `README.md`): `xattr -dr com.apple.quarantine` + open, or System Settings →
+  Privacy & Security → Open Anyway. Free. On macOS 15/26 the old right-click → Open bypass
+  is gone, so the Terminal command or the Settings toggle is the path.
+- **Notarize** — the only way a `.dmg` launches with no prompt at all. Requires enrolling
+  in the Apple Developer Program ($99/yr), a Developer ID Application cert, and an
+  app-specific password, then `codesign` with the real identity + `xcrun notarytool submit`
+  + `xcrun stapler staple` in the macOS CI job. Not set up here; add it only if the cost is
+  worth it for a personal vault.
+
 ---
 
 ## Before you hand it to anyone

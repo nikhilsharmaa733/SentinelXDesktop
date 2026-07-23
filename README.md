@@ -42,6 +42,42 @@ mitigate, but do not eliminate, these.
 cannot cross-compile, so the `.msi`/`.exe` are produced on a Windows runner and downloaded
 from the run's **Artifacts**. Details in [`PACKAGING.md`](PACKAGING.md).
 
+## Installing on macOS — first launch
+
+The macOS `.dmg` (Apple Silicon / arm64) is **not signed with an Apple Developer ID and
+not notarized** — there's no paid Apple Developer certificate behind this project. The app
+*is* ad-hoc signed (jpackage does this automatically), and the build is genuine, but macOS
+Gatekeeper still blocks apps it can't trace to a notarized developer. On first launch you'll
+see the icon bounce once and quit, with no error. This is expected for any unsigned app;
+you clear it once and never see it again.
+
+Drag **SentinelX** into `/Applications`, then do **one** of the following:
+
+**Terminal (most reliable):**
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SentinelX.app
+open /Applications/SentinelX.app
+```
+
+**Or via the GUI** (macOS 13–15 differ; on macOS 15 Sequoia and macOS 26 Tahoe the old
+right-click → Open shortcut is gone): double-click once, let it get blocked, then go to
+**System Settings → Privacy & Security**, scroll to *"SentinelX was blocked…"*, and click
+**Open Anyway**.
+
+> **Still won't open** (e.g. you removed quarantine but it now refuses to even bounce)?
+> macOS has cached a "denied" verdict. Reset it by clearing every attribute and re-applying
+> a fresh ad-hoc signature, which changes the code hash and invalidates the stale cache:
+>
+> ```bash
+> xattr -cr /Applications/SentinelX.app
+> codesign --force --deep --sign - /Applications/SentinelX.app
+> open /Applications/SentinelX.app
+> ```
+
+An arm64 `.dmg` **cannot** run on an Intel Mac. If you're on Intel (`uname -m` prints
+`x86_64`), this build won't work regardless of the steps above — it needs a separate x64 build.
+
 ## Stack
 
 Kotlin · Compose Desktop · Gson · Bouncy Castle (Argon2id). Pure JVM, no native

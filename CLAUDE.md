@@ -13,16 +13,18 @@ That format is the only coupling between the two programs.
 | | |
 |---|---|
 | Stack | Kotlin + Compose Desktop 1.7.3, Kotlin 2.0.21 |
-| Platforms | Windows (target), Linux (development + use) |
+| Platforms | Windows, Linux, macOS (Apple Silicon) — installers built in CI |
 | Unlock | Master password — no Keystore, no biometrics |
 | Scope | Everything except camera scanning; images attach from disk |
 
 ## Environment
 
-- **No system JDK.** `JAVA_HOME` in `~/.bashrc` and `~/.profile` points at Android Studio's
-  bundled JBR 21 (`~/Downloads/android-studio-quail1-linux/android-studio/jbr`), and
-  `~/.gradle/gradle.properties` sets `org.gradle.java.home` to the same. Do **not** add
-  `jvmToolchain(...)` to the build — Gradle will hunt for a JDK that isn't installed and fail.
+- **System OpenJDK 21 at `/usr/lib/jvm/java-21-openjdk-amd64`.** `JAVA_HOME` (`~/.bashrc`,
+  `~/.profile`) and `~/.gradle/gradle.properties` (`org.gradle.java.home`) both point at it.
+  It was installed specifically for `jpackage` — the Android Studio JBR that was here first
+  has no `jpackage`, so it could build the app but not the installers. Do **not** add
+  `jvmToolchain(...)` — pinning an exact toolchain makes Gradle hunt for a JDK and fail;
+  letting it use the daemon JVM is what works.
 - `./gradlew run` launches the app natively on Linux in seconds. No emulator, no device.
 - `./gradlew test` runs the format tests.
 - **`./run-isolated.sh` when someone is testing the app while you keep working.**
@@ -94,20 +96,53 @@ unset SXV_PASSWORD
 Password comes from the environment, never `--args` (visible in `ps`, saved in shell history).
 Output is counts and integrity checks only — no field values — so it is safe to share.
 
-## Status — feature complete
+## Status — feature complete and shipping
 
 - ✅ `core/format` — `.sxv` read/write, both versions. **Verified against a real phone
   export**: counts matched, so the contract holds end to end.
 - ✅ `core/store` — Argon2id local vault, atomic versioned saves, sealed image blobs
 - ✅ All six panes, full CRUD, images attach from disk
-- ✅ Command palette (Ctrl+K), password health, expiry dashboard, password generator
+- ✅ Command palette (Ctrl+K), password health, expiry dashboard
+- ✅ Password generator — in the login editor **and** standalone from the sidebar
+- ✅ Ledger balance-trend graph — cumulative balance over time, hover crosshair + tooltip
+  (`ui/panes/LedgerGraph.kt`). Note the Compose gotcha it fixed: a `fillMaxSize()` list
+  after other content in a `Column` renders off-screen; the transaction list must be
+  `weight(1f)`.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
-- ⬜ Windows installer — see `PACKAGING.md`. `jpackage` cannot cross-compile, and the
-  JBR on this machine has no `jpackage` at all, so `createDistributable` fails here by
-  design. `packageUberJarForCurrentOS` works.
+- ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
 
 42 tests passing.
+
+## Releasing
+
+Installers are built in GitHub Actions — `.github/workflows/release.yml`. jpackage cannot
+cross-compile, so each OS builds on its own runner: **Windows** `.msi`/`.exe`, **Linux**
+`.deb`/`.rpm`/portable `.tar.gz`, **macOS** arm64 `.dmg`. A final `release` job attaches
+everything to one public GitHub Release. Repo: `nikhilsharmaa733/SentinelXDesktop`.
+
+Cut a release by bumping `version` **and** `packageVersion` in `build.gradle.kts` (both;
+leave `upgradeUuid` alone), commit, then push a `v*` tag — the tag is what triggers build
++ publish:
+
+    git tag v1.0.5 && git push origin v1.0.5
+
+`workflow_dispatch` runs a test build (artifacts only, no release). Current release: **v1.0.4**.
+
+Locally (the system JDK has jpackage): `./gradlew packageDeb` / `packageRpm` /
+`packageAppImage` build Linux artifacts; `runnableJar` builds a launchable uber jar.
+Windows and macOS installers only come from CI.
+
+**macOS Gatekeeper — not a bug.** The `.dmg` is ad-hoc signed by jpackage but NOT notarized
+(no paid Apple Developer cert), so macOS 26 blocks it on first launch: the icon bounces once
+and quits. Fix is a one-time recipient step (`xattr -dr com.apple.quarantine
+/Applications/SentinelX.app`, or Settings → Privacy & Security → Open Anyway), documented in
+the README and prepended to every release body. Only paid notarization removes the prompt.
+The macOS CI leg is **arm64-only** on purpose — Intel (`macos-13`) runners queue
+unpredictably and would stall the `release` job that waits on them.
+
+Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the push touches
+`.github/workflows/**`). This Linux session has no stored credentials — the user runs `git push`.
 
 ## Things that will bite whoever works on this next
 

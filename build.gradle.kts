@@ -148,7 +148,8 @@ compose.desktop {
             targetFormats(
                 TargetFormat.Msi, TargetFormat.Exe,   // Windows
                 TargetFormat.Deb, TargetFormat.Rpm,   // Linux installers
-                TargetFormat.AppImage                 // Linux portable app-image (tar'd in CI)
+                TargetFormat.AppImage,                // Linux portable app-image (tar'd in CI)
+                TargetFormat.Dmg                      // macOS
             )
             packageName = "SentinelX"
             packageVersion = "1.0.2"

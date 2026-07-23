@@ -1,13 +1,14 @@
 name: Build & Release
 
-# Builds installers for BOTH Windows and Linux, and — on a version tag — publishes
+# Builds installers for Windows, Linux and macOS, and — on a version tag — publishes
 # them all as a single public GitHub Release anyone can download.
 #
-# WHY TWO BUILD JOBS
+# WHY SEPARATE BUILD JOBS PER OS
 # jpackage cannot cross-compile: it only builds installers for the OS it runs on. So
-# the Windows .msi/.exe must be built on a Windows runner and the Linux .deb/.rpm on a
-# Linux runner. A third job gathers both and attaches them to one release, which also
-# avoids two jobs racing to create the same release.
+# the Windows .msi/.exe build on a Windows runner, the Linux .deb/.rpm on a Linux
+# runner, and the macOS .dmg on macOS runners (one per CPU architecture). A final job
+# gathers everything and attaches it to one release, which also avoids the build jobs
+# racing to create the same release.
 #
 # HOW TO GET THE FILES
 #   • Test build:   Actions tab → "Build & Release" → "Run workflow".
@@ -99,16 +100,58 @@ jobs:
             SentinelX-linux-x64.tar.gz
           if-no-files-found: error
 
+  # ── macOS: .dmg for Apple Silicon + Intel ───────────────────────────────────────
+  macos:
+    strategy:
+      fail-fast: false        # one arch failing must not cancel the other
+      matrix:
+        include:
+          - runner: macos-14  # Apple Silicon (arm64) — every M-series Mac, incl. the M4 Pro
+            arch: arm64
+          - runner: macos-13  # Intel (x86_64) — pre-2020 Macs
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build DMG
+        run: ./gradlew packageDmg --no-daemon --stacktrace
+
+      # A build on an arm64 runner produces an arm64-only app and vice versa, yet
+      # jpackage names both "SentinelX-<version>.dmg". Tag the arch into the filename
+      # so the two release assets stay distinct instead of overwriting each other.
+      - name: Tag the DMG with its architecture
+        run: |
+          dmg=$(ls build/compose/binaries/main/dmg/*.dmg | head -1)
+          mv "$dmg" "$(dirname "$dmg")/$(basename "$dmg" .dmg)-${{ matrix.arch }}.dmg"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: build/compose/binaries/main/dmg/*.dmg
+          if-no-files-found: error
+
   # ── Release: gather everything, publish one release (tags only) ─────────────────
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux]
+    # always() + explicit success checks: a macOS build failure must never block the
+    # Windows/Linux release — the .dmg is simply left off until its build is fixed.
+    # Windows and Linux must both succeed for a release to be published at all.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+    needs: [windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist        # dist/windows-installers/*, dist/linux-packages/*
+          path: dist        # dist/windows-installers/*, dist/linux-packages/*, dist/macos-*/*
 
       - name: Publish GitHub Release
         env:

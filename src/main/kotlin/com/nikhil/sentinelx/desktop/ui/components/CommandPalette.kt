@@ -23,9 +23,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
+import com.nikhil.sentinelx.desktop.core.format.businessDateOf
+import com.nikhil.sentinelx.desktop.core.format.isIn
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.requestWhenReady
 import com.nikhil.sentinelx.desktop.ui.theme.*
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** One searchable thing from anywhere in the vault. */
 data class PaletteEntry(
@@ -65,7 +69,27 @@ fun buildIndex(backup: MasterBackup): List<PaletteEntry> = buildList {
     backup.ledger.forEach {
         add(PaletteEntry(it.title.ifBlank { "Untitled" }, "${it.category} · ${if (it.isIncoming) "+" else "−"}${it.amount}", Section.LEDGER, "ᚢ", if (it.isIncoming) IncomeGreen else ExpenseRed))
     }
+    backup.cashBook.forEach {
+        // Titled by date, because that is how anyone looks for a handover — "what
+        // happened on the 14th", never "find the ₹56,000 one".
+        val date = businessDateOf(it.entryDate).format(paletteDate)
+        add(
+            PaletteEntry(
+                title = date,
+                subtitle = listOf(
+                    it.slot,
+                    (if (it.isIn()) "+" else "−") + it.amount,
+                    it.particulars.ifBlank { it.verifiedBy }
+                ).filter { part -> part.isNotBlank() }.joinToString(" · "),
+                section = Section.CASHBOOK,
+                glyph = "ᛃ",
+                accent = if (it.isIn()) IncomeGreen else ExpenseRed
+            )
+        )
+    }
 }
+
+private val paletteDate = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)
 
 /**
  * Ranks matches so the useful ones surface first: a title that starts with the query

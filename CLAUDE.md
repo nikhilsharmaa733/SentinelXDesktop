@@ -101,18 +101,23 @@ Output is counts and integrity checks only — no field values — so it is safe
 - ✅ `core/format` — `.sxv` read/write, both versions. **Verified against a real phone
   export**: counts matched, so the contract holds end to end.
 - ✅ `core/store` — Argon2id local vault, atomic versioned saves, sealed image blobs
-- ✅ All six panes, full CRUD, images attach from disk
+- ✅ All seven panes, full CRUD, images attach from disk
 - ✅ Command palette (Ctrl+K), password health, expiry dashboard
 - ✅ Password generator — in the login editor **and** standalone from the sidebar
 - ✅ Ledger balance-trend graph — cumulative balance over time, hover crosshair + tooltip
   (`ui/panes/LedgerGraph.kt`). Note the Compose gotcha it fixed: a `fillMaxSize()` list
   after other content in a `Column` renders off-screen; the transaction list must be
   `weight(1f)`.
+- ✅ **Cash Book** (`ui/panes/CashBookPane.kt`) — the daily cash handover: paired
+  evening/morning day cards, the note-by-note `DenominationCounter`, reconciliation
+  against the stated amount, carry-forward of last night's tally, note inventory,
+  verification workflow, and CSV + printable-HTML export (`core/format/CashBookExport.kt`).
+  Added `cashBook` to `MasterBackup` and took the archive to **v7**.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
 
-42 tests passing.
+77 tests passing.
 
 ## Releasing
 
@@ -149,7 +154,9 @@ Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the p
 - **Sidecar, not schema.** Favourites and any future desktop-only state go in
   `Session.readSidecar`/`writeSidecar`, never in `MasterBackup`. That data class is
   the wire format; adding a field changes what the phone reads and Gson would drop it
-  there silently anyway.
+  there silently anyway. The one legitimate exception so far is `cashBook`, which is
+  *meant* to travel — and it landed on the phone in the same piece of work, which is the
+  bar for adding anything else to that class.
 - **Uniqueness constraints the phone enforces but never surfaces.** `artifacts` is
   UNIQUE on `(label1, label2)`, `chronicles` and `prophecies` on title, `accounts` on
   name — all with `REPLACE`, so a collision *destroys* the other row on restore. Every
@@ -159,5 +166,14 @@ Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the p
   updating the existing one.
 - **Undo is built on store snapshots**, not a recycle bin — one mechanism covers bad
   deletes, bad edits and bad imports alike.
+- **Cash entries: `amount` is authoritative, `denominations` is commentary.** Every total
+  and export reads `amount` and never parses the JSON breakdown, so a corrupt breakdown
+  costs the note detail and nothing else. `decodeDenominations` must never throw.
+- **`entryDate` is UTC midnight, not local midnight.** A cash book's date is a calendar
+  day, not an instant. Use `businessDateOf()`; formatting it in the local zone shows the
+  previous day west of Greenwich.
+- **The cash book exports are plaintext**, like the ledger CSV and for the same reason.
+  Both dialogs warn every time. Do not remove the warning, and do not extend plaintext
+  export to logins or card secrets.
 
 Full plan: `~/.claude/plans/typed-pondering-aho.md`

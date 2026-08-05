@@ -36,6 +36,7 @@ import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
+import com.nikhil.sentinelx.desktop.ui.panes.CashBookPane
 import com.nikhil.sentinelx.desktop.ui.panes.ChroniclesPane
 import com.nikhil.sentinelx.desktop.ui.panes.LedgerPane
 import com.nikhil.sentinelx.desktop.ui.panes.NotesPane
@@ -88,6 +89,7 @@ fun AppShell(state: AppState) {
                 Section.NOTES -> NotesPane(state)
                 Section.CHRONICLES -> ChroniclesPane(state)
                 Section.LEDGER -> LedgerPane(state)
+                Section.CASHBOOK -> CashBookPane(state)
             }
             }
             }
@@ -175,6 +177,10 @@ private fun Section.countIn(state: AppState): Int? = when (this) {
     Section.NOTES -> state.backup.prophecies.size
     Section.CHRONICLES -> state.backup.chronicles.size
     Section.LEDGER -> state.backup.ledger.size
+    // Record count, like every other section. The count of entries still awaiting
+    // verification is the more actionable number, but a bare digit in the sidebar
+    // can't say which of the two it is — that one gets a labelled chip in the pane.
+    Section.CASHBOOK -> state.backup.cashBook.size
 }
 
 @Composable
@@ -564,7 +570,8 @@ private fun OverviewPane(state: AppState) {
             Triple("Notes", b.prophecies.size, PurpleMystic),
             Triple("Chronicles", b.chronicles.size, GoldBright),
             Triple("Accounts", b.accounts.size, IncomeGreen),
-            Triple("Ledger rows", b.ledger.size, AmberWarn)
+            Triple("Ledger rows", b.ledger.size, AmberWarn),
+            Triple("Cash entries", b.cashBook.size, GoldIce)
         )
         tiles.chunked(3).forEach { row ->
             Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {

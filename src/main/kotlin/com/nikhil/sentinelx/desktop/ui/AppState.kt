@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
+import com.nikhil.sentinelx.desktop.core.format.CashEntryEntity
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
 import com.nikhil.sentinelx.desktop.core.format.LoginEntity
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
@@ -25,7 +26,8 @@ enum class Section(val label: String, val glyph: String) {
     CARDS("Cards", "ᚠ"),
     NOTES("Notes", "ᚱ"),
     CHRONICLES("Chronicles", "ᛀ"),
-    LEDGER("Ledger", "ᚢ")
+    LEDGER("Ledger", "ᚢ"),
+    CASHBOOK("Cash Book", "ᛃ")
 }
 
 /**
@@ -194,6 +196,27 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     }
 
     fun deleteTransaction(id: Long) = mutate { b -> b.copy(ledger = b.ledger.filterNot { it.id == id }) }
+
+    fun upsertCashEntry(entry: CashEntryEntity) = mutate { b ->
+        val id = if (entry.id == 0L) nextLongId(b.cashBook) { it.id } else entry.id
+        val row = entry.copy(id = id, timestamp = System.currentTimeMillis())
+        b.copy(cashBook = b.cashBook.replacingOrAdding(row) { it.id == id })
+    }
+
+    fun deleteCashEntry(id: Long) = mutate { b -> b.copy(cashBook = b.cashBook.filterNot { it.id == id }) }
+
+    /**
+     * Names already used as counter or verifier, most recent first.
+     *
+     * The same two or three people sign off every night, so the editor offers them
+     * rather than making someone retype a name 365 times a year.
+     */
+    fun knownCashPeople(): List<String> =
+        backup.cashBook
+            .sortedByDescending { it.timestamp }
+            .flatMap { listOf(it.countedBy, it.verifiedBy) }
+            .filter { it.isNotBlank() }
+            .distinct()
 
     // ── Favourites ────────────────────────────────────────────────────────────
     //

@@ -138,7 +138,9 @@ class SxvFormatTest {
         assertEquals(original.prophecies, read.backup.prophecies)
         assertEquals(original.ledger, read.backup.ledger)
         assertEquals(original.accounts, read.backup.accounts)
-        assertEquals(6, read.backup.version)
+        assertEquals(original.cashBook, read.backup.cashBook)
+        // v7 added the cash book. Older archives still read — see CashBookTest.
+        assertEquals(7, read.backup.version)
 
         assertEquals(sampleImages().keys, read.images.keys)
         sampleImages().forEach { (name, bytes) ->

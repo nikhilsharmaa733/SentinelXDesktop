@@ -132,11 +132,32 @@ leave `upgradeUuid` alone), commit, then push a `v*` tag — the tag is what tri
 
     git tag v1.0.5 && git push origin v1.0.5
 
-`workflow_dispatch` runs a test build (artifacts only, no release). Current release: **v1.0.4**.
+`workflow_dispatch` runs a test build (artifacts only, no release). Current release: **v1.1.0**
+(Cash Book).
+
+**A push is not a release.** Pushing `main` only moves the code; the CI is triggered by the
+**tag**, and nothing is built or published without one. If a "release" appears to have gone
+out but no installers exist, check `git ls-remote --tags origin` first — a missing tag is the
+usual answer.
+
+**Bump both version fields.** `version` names the jar and the release artefacts;
+`packageVersion` is what jpackage stamps *inside* the installers, and on Windows it is what
+the MSI upgrade check compares — leaving it behind makes the new installer read as a reinstall
+of the old version rather than an upgrade. They have already drifted apart once (v1.1.0).
 
 Locally (the system JDK has jpackage): `./gradlew packageDeb` / `packageRpm` /
-`packageAppImage` build Linux artifacts; `runnableJar` builds a launchable uber jar.
-Windows and macOS installers only come from CI.
+`packageAppImage` build Linux artifacts into `build/compose/binaries/main/deb/` etc.;
+`runnableJar` builds a launchable uber jar. Windows and macOS installers only come from CI.
+
+Installing the local `.deb` on Zorin (Ubuntu-based):
+
+    sudo apt install ./build/compose/binaries/main/deb/sentinelx_<version>_amd64.deb
+
+It installs to `/opt/sentinelx` and adds a desktop entry, so it launches from the app menu.
+Upgrading in place is the same command with the newer file. The vault lives in
+`$XDG_DATA_HOME/SentinelX` (typically `~/.local/share/SentinelX`) — **outside** the package,
+so uninstalling or reinstalling never touches it. Wiping that directory is the only way to
+reset a forgotten master password, and it destroys the vault with it.
 
 **macOS Gatekeeper — not a bug.** The `.dmg` is ad-hoc signed by jpackage but NOT notarized
 (no paid Apple Developer cert), so macOS 26 blocks it on first launch: the icon bounces once

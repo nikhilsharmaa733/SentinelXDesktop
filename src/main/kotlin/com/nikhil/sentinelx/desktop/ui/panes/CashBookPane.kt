@@ -3,6 +3,8 @@ package com.nikhil.sentinelx.desktop.ui.panes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.*
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import java.time.LocalDate
@@ -81,6 +84,17 @@ fun CashBookPane(state: AppState) {
         if (earliest == null) 0.0 else all.filter { it.entryDate < earliest }.netPosition()
     }
 
+    // Notes physically in hand at the close of the scoped window — every entry in the
+    // book up to that point, not just the ones inside it. Scoping the inventory to the
+    // month would report "notes that moved during March", which is not what the label
+    // says and not a number anybody can check against the actual pile of cash.
+    // The search box deliberately does not narrow it either: what is in the house does
+    // not change because you typed a name.
+    val heldThrough = remember(all, scoped) {
+        val end = scoped.maxOfOrNull { it.entryDate }
+        if (end == null) all else all.filter { it.entryDate <= end }
+    }
+
     var editing by remember { mutableStateOf<CashEntryEntity?>(null) }
     var creating by remember { mutableStateOf<NewEntrySeed?>(null) }
     var exporting by remember { mutableStateOf(false) }
@@ -95,11 +109,16 @@ fun CashBookPane(state: AppState) {
                 "Cash Book",
                 "${all.size} entries · ${months.size} month${if (months.size == 1) "" else "s"}"
             ) {
+                // "Balance sheet", not "export": this one writes plaintext CSV/HTML,
+                // while TransferActions below writes an encrypted .sxv. Two buttons both
+                // reading EXPORT next to each other would be a genuinely dangerous
+                // ambiguity — one of them leaves the vault unencrypted.
                 if (scoped.isNotEmpty()) {
                     TextButton(onClick = { exporting = true }) {
-                        Text("EXPORT", color = TextSubtle, fontSize = 11.sp, letterSpacing = 1.sp)
+                        Text("BALANCE SHEET", color = TextSubtle, fontSize = 11.sp, letterSpacing = 1.sp)
                     }
                 }
+                TransferActions(state, Section.CASHBOOK)
                 TextButton(onClick = { creating = NewEntrySeed(todayBusinessDate(), CashBook.SLOT_EVENING) }) {
                     Text(
                         "+ ENTRY", color = CyanGlow, fontSize = 11.sp,
@@ -160,6 +179,8 @@ fun CashBookPane(state: AppState) {
                             Spacer(Modifier.height(12.dp))
                         }
 
+                        NoteInventoryStrip(heldThrough)
+
                         SearchField(query, { query = it }, "Search particulars, people or dates")
                         Spacer(Modifier.height(12.dp))
 
@@ -179,13 +200,7 @@ fun CashBookPane(state: AppState) {
                                         onViewSlips = { viewingSlips = it }
                                     )
                                 }
-                                item {
-                                    if (month != null) {
-                                        NoteInventoryCard(scoped)
-                                        Spacer(Modifier.height(12.dp))
-                                    }
-                                    Spacer(Modifier.height(20.dp))
-                                }
+                                item { Spacer(Modifier.height(20.dp)) }
                             }
                         }
                     }
@@ -296,8 +311,12 @@ private fun CashSummaryTiles(entries: List<CashEntryEntity>, opening: Double) {
     val credit = entries.totalCredit()
     val closing = opening + entries.netPosition()
 
+    // Green marks the closing balance, not the debit column. Debit is only "money that
+    // came in this window"; the balance is what is actually in hand, and that is the
+    // figure worth reading in the positive colour. Debit takes the gold the balance used
+    // to wear so the two stay visually distinct.
     Row(Modifier.fillMaxWidth()) {
-        CashTile("TOTAL DEBIT", debit, "received", IncomeGreen, Modifier.weight(1f))
+        CashTile("TOTAL DEBIT", debit, "received", GoldIce, Modifier.weight(1f))
         Spacer(Modifier.width(12.dp))
         CashTile("TOTAL CREDIT", credit, "paid out", ExpenseRed, Modifier.weight(1f))
         Spacer(Modifier.width(12.dp))
@@ -305,7 +324,7 @@ private fun CashSummaryTiles(entries: List<CashEntryEntity>, opening: Double) {
             "CLOSING BALANCE",
             closing,
             if (opening != 0.0) "opened at ${formatMoney(opening)}" else "in hand",
-            if (closing < 0) ExpenseRed else GoldIce,
+            if (closing < 0) ExpenseRed else IncomeGreen,
             Modifier.weight(1f)
         )
     }
@@ -608,41 +627,91 @@ private fun OtherEntryRow(entry: CashEntryEntity, onEdit: () -> Unit) {
  * What is physically still in the house, note by note — every denomination that came in
  * less every one that went out. Paper slips cannot produce this, and it is the fastest
  * possible check against the actual pile of cash.
+ *
+ * Pinned above the search box rather than sitting at the foot of the day list, where it
+ * sank further out of reach with every entry recorded — the one figure you want while
+ * counting was the one you had to scroll for.
+ *
+ * Being pinned is what forces the shape. It defaults to a **single line**: the total,
+ * and the denominations scrolling sideways beside it. A wrapping grid of chips looked
+ * tidy with three denominations and swallowed the search box and the first two days
+ * with ten. Anything permanently on screen has to cost a fixed, small amount of it, so
+ * the full table is one click away rather than always there.
  */
 @Composable
-private fun NoteInventoryCard(entries: List<CashEntryEntity>) {
+private fun NoteInventoryStrip(entries: List<CashEntryEntity>) {
     val inventory = remember(entries) { entries.noteInventory() }
     if (inventory.isEmpty()) return
 
+    var expanded by remember { mutableStateOf(false) }
     val total = inventory.entries.sumOf { (denomination, count) -> denomination.toDouble() * count }
+    val notes = inventory.values.sum()
 
-    GemCard(accent = GoldIce, modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    GemCard(accent = GoldIce, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                "NOTES STILL HELD",
-                color = GoldIce, fontSize = 9.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold
+                "NOTES IN HAND",
+                color = GoldIce, fontSize = 9.sp,
+                letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold
             )
-            Spacer(Modifier.weight(1f))
-            Text(formatMoney(total), color = GoldIce, fontSize = 14.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.width(10.dp))
+            Text(formatMoney(total), color = GoldIce, fontSize = 15.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.width(6.dp))
+            Text("· $notes notes", color = TextMuted, fontSize = 10.sp)
+
+            if (!expanded) {
+                Spacer(Modifier.width(14.dp))
+                // Scrolls sideways rather than wrapping, so the strip is exactly one
+                // line tall whether there are three denominations in play or ten.
+                Row(
+                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    inventory.forEach { (denomination, count) ->
+                        Box(
+                            Modifier.clip(RoundedCornerShape(6.dp))
+                                .background(GoldIce.copy(0.10f))
+                                .padding(horizontal = 7.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                "₹$denomination × $count",
+                                color = TextSubtle, fontSize = 10.sp, maxLines = 1
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+
+            Spacer(Modifier.width(10.dp))
+            Text(if (expanded) "▴" else "▾", color = TextMuted, fontSize = 11.sp)
         }
-        Spacer(Modifier.height(12.dp))
-        inventory.forEach { (denomination, count) ->
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("₹$denomination", color = TextSubtle, fontSize = 11.sp, modifier = Modifier.width(60.dp))
-                Text("×", color = TextMuted, fontSize = 10.sp)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "$count",
-                    color = TextParchment, fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.width(48.dp)
-                )
-                Text(
-                    formatMoney(denomination.toDouble() * count),
-                    color = TextMuted, fontSize = 11.sp, modifier = Modifier.weight(1f)
-                )
+
+        if (expanded) {
+            Spacer(Modifier.height(10.dp))
+            inventory.forEach { (denomination, count) ->
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("₹$denomination", color = TextSubtle, fontSize = 11.sp, modifier = Modifier.width(60.dp))
+                    Text("×", color = TextMuted, fontSize = 10.sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "$count",
+                        color = TextParchment, fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold, modifier = Modifier.width(48.dp)
+                    )
+                    Text(
+                        formatMoney(denomination.toDouble() * count),
+                        color = TextMuted, fontSize = 11.sp, modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }

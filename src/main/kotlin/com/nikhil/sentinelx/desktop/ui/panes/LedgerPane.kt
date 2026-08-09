@@ -24,6 +24,7 @@ import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.CsvExport
 import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import java.awt.FileDialog
@@ -81,6 +82,7 @@ fun LedgerPane(state: AppState) {
                     Text("EXPORT CSV", color = TextSubtle, fontSize = 11.sp, letterSpacing = 1.sp)
                 }
             }
+            TransferActions(state, Section.LEDGER)
             TextButton(onClick = { creatingAccount = true }) {
                 Text("+ ACCOUNT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }

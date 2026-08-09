@@ -26,6 +26,7 @@ import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.core.audit.Strength
 import com.nikhil.sentinelx.desktop.core.format.LoginEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
@@ -86,6 +87,7 @@ fun LoginsPane(state: AppState) {
                         }
                     )
                 }
+                TransferActions(state, Section.LOGINS)
             }
 
             Row(Modifier.fillMaxSize()) {

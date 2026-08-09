@@ -143,10 +143,25 @@ fun GemCard(
             )
     ) {
         if (stripe) {
-            Box(
-                Modifier.width(3.dp).fillMaxHeight()
-                    .background(Brush.verticalGradient(listOf(accent, accent.copy(0.1f))))
-            )
+            // matchParentSize, not fillMaxHeight on the stripe directly.
+            //
+            // A Box sizes itself to its largest child, and `fillMaxHeight()` measures
+            // against the incoming max constraint — so a bare stripe made the whole card
+            // as tall as whatever height it was offered. Inside a LazyColumn item that
+            // constraint is effectively infinite and collapses back to the content
+            // height, which is why every existing caller looked correct. Put the same
+            // card in a plain Column, where the constraint is the remaining space, and
+            // it swallows the pane: the Cash Book's pinned note inventory grew to fill
+            // the window and pushed the search box and the whole day list off the bottom.
+            //
+            // matchParentSize is measured after the real content and does not feed into
+            // the parent's size, so the stripe follows the card instead of driving it.
+            Box(Modifier.matchParentSize()) {
+                Box(
+                    Modifier.width(3.dp).fillMaxHeight()
+                        .background(Brush.verticalGradient(listOf(accent, accent.copy(0.1f))))
+                )
+            }
         }
         Column(Modifier.padding(start = if (stripe) 22.dp else 20.dp, top = 18.dp, end = 20.dp, bottom = 18.dp), content = content)
     }

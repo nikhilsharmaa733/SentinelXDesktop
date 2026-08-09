@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SxvFormatTest {
@@ -139,8 +140,10 @@ class SxvFormatTest {
         assertEquals(original.ledger, read.backup.ledger)
         assertEquals(original.accounts, read.backup.accounts)
         assertEquals(original.cashBook, read.backup.cashBook)
-        // v7 added the cash book. Older archives still read — see CashBookTest.
-        assertEquals(7, read.backup.version)
+        // v7 added the cash book, v8 the `sections` tag. Older archives still read —
+        // see CashBookTest and VaultMergeTest.
+        assertEquals(8, read.backup.version)
+        assertNull(read.backup.sections, "a full archive stays untagged so pre-v8 builds read it")
 
         assertEquals(sampleImages().keys, read.images.keys)
         sampleImages().forEach { (name, bytes) ->

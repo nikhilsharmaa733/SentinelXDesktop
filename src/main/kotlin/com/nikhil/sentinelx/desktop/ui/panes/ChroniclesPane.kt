@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
 import com.nikhil.sentinelx.desktop.core.format.pageFilenames
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
@@ -63,7 +64,7 @@ fun ChroniclesPane(state: AppState) {
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        PaneHeader("Chronicles", "${chronicles.size} documents")
+        PaneHeader("Chronicles", "${chronicles.size} documents") { TransferActions(state, Section.CHRONICLES) }
 
         Row(Modifier.fillMaxSize()) {
             Column(

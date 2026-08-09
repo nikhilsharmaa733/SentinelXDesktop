@@ -56,6 +56,19 @@ Verified against a real 3 MB archive: 950 wrapped lines, LF endings, `SXV2` mark
 compatibility — the field arrives absent and is defaulted, losing data with no error. If a name
 changes on Android, change it here in the same commit.
 
+⚠️ **`VaultMerge.kt` is a mirrored file.** `SentinelX/app/src/main/java/com/nikhil/sentinelx/data/VaultMerge.kt`
+is the same code, byte for byte, apart from its package line and the mirror comment — a
+`diff` of the two is the check. The same merge run on the phone and on the desktop has to
+produce the same vault, so a change to one is a change to both. Note especially that
+record identity is **the unique index Room declares**, not the primary key: `id` is a
+per-device autoincrement and means nothing across machines.
+
+⚠️ **A full export must stay untagged.** `MasterBackup.sections` is null for a whole-vault
+archive and names its contents only for a scoped one, so pre-v8 builds keep reading full
+archives as they always did. The flip side is that a pre-v8 build reading a *scoped*
+archive treats it as a full backup — which is why scoped exports are named
+`Sentinel_<Section>_*.sxv`.
+
 ⚠️ **Two KDFs on purpose.** PBKDF2/600k for `.sxv` because the Android format fixes it;
 Argon2id (Bouncy Castle, pure Java) for the local store because that format is ours. Do not
 "improve" the `.sxv` KDF — it would produce archives the phone cannot open.
@@ -113,11 +126,16 @@ Output is counts and integrity checks only — no field values — so it is safe
   against the stated amount, carry-forward of last night's tally, note inventory,
   verification workflow, and CSV + printable-HTML export (`core/format/CashBookExport.kt`).
   Added `cashBook` to `MasterBackup` and took the archive to **v7**.
+- ✅ **Merge import and scoped transfers** (`core/format/VaultMerge.kt`,
+  `ui/components/TransferDialogs.kt`) — import offers Merge or Replace, and on a clash
+  offers do-not-copy / replace / keep-both, with per-section counts shown *before* the
+  choice. Every pane also carries its own IMPORT/EXPORT for just its records. Added
+  `sections` to `MasterBackup` and took the archive to **v8**.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
 
-77 tests passing.
+105 tests passing.
 
 ## Releasing
 
@@ -171,6 +189,18 @@ Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the p
 `.github/workflows/**`). This Linux session has no stored credentials — the user runs `git push`.
 
 ## Things that will bite whoever works on this next
+
+- **`GemCard` used to eat any bounded parent.** Its accent stripe was
+  `Box(Modifier.width(3.dp).fillMaxHeight())`, and a `Box` sizes to its largest child —
+  so the card grew to whatever height it was *offered*. Inside a `LazyColumn` item the
+  offered height is effectively infinite and collapses back to the content, which is why
+  every caller looked fine for months. The first time one was placed in a plain `Column`
+  (the Cash Book's pinned note inventory) it swallowed the pane and pushed the search box
+  and the entire day list off the bottom. The stripe is now wrapped in
+  `Box(Modifier.matchParentSize())`, which is measured after the content and does not feed
+  into the parent's size. Same family as the `weight(1f)` rule below: **any
+  `fillMax*`/`fillMaxSize` inside a component you intend to reuse is a constraint bug
+  waiting for a bounded parent.**
 
 - **Sidecar, not schema.** Favourites and any future desktop-only state go in
   `Session.readSidecar`/`writeSidecar`, never in `MasterBackup`. That data class is

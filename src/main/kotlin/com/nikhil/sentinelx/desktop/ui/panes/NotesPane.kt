@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.ProphecyEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import java.text.SimpleDateFormat
@@ -65,7 +66,7 @@ fun NotesPane(state: AppState) {
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        PaneHeader("Notes", "${notes.size} entries")
+        PaneHeader("Notes", "${notes.size} entries") { TransferActions(state, Section.NOTES) }
 
         Row(Modifier.fillMaxSize()) {
             Column(

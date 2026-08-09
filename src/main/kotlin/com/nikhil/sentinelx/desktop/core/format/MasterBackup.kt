@@ -32,9 +32,86 @@ data class MasterBackup(
     val accounts: List<AccountEntity> = emptyList(),
     /** Daily cash handover / balance sheet. Added in v7; absent from v6 archives. */
     val cashBook: List<CashEntryEntity> = emptyList(),
-    val version: Int = 7,
+    /**
+     * Which sections this archive claims to carry, as [VaultSection] constants.
+     *
+     * Null means "the whole vault" — that is what every archive written before v8 is,
+     * and what a full export still writes. A *scoped* export ("just my logins") names
+     * only the sections it holds, so a Replace import can clear those and leave the
+     * rest of the vault alone. Without this, a logins-only file would be
+     * indistinguishable from a full backup that happens to have nothing else in it,
+     * and replacing from it would wipe the ledger.
+     *
+     * Added in v8. A pre-v8 build reading a v8 scoped archive ignores this field and
+     * treats it as a full backup, which is why scoped exports are named
+     * `Sentinel_<Section>_*.sxv` — the mistake is at least visible before it is made.
+     */
+    val sections: List<String>? = null,
+    val version: Int = 8,
     val timestamp: Long = 0L
 )
+
+/**
+ * The units an import or export can be scoped to.
+ *
+ * Accounts and ledger rows are one section, not two: a transaction without its account
+ * is an orphan, and a merge has to resolve both together to remap `accountId`.
+ */
+object VaultSection {
+    const val LOGINS = "LOGINS"
+    const val CARDS = "CARDS"
+    const val NOTES = "NOTES"
+    const val CHRONICLES = "CHRONICLES"
+    const val LEDGER = "LEDGER"
+    const val CASHBOOK = "CASHBOOK"
+
+    val ALL = listOf(LOGINS, CARDS, NOTES, CHRONICLES, LEDGER, CASHBOOK)
+
+    fun label(section: String): String = when (section) {
+        LOGINS -> "Logins"
+        CARDS -> "Cards & Documents"
+        NOTES -> "Notes"
+        CHRONICLES -> "Chronicles"
+        LEDGER -> "Ledger & Accounts"
+        CASHBOOK -> "Cash Book"
+        else -> section
+    }
+}
+
+/** What this archive actually carries. Absent (pre-v8) means the whole vault. */
+fun MasterBackup.carriedSections(): List<String> =
+    sections?.takeIf { it.isNotEmpty() } ?: VaultSection.ALL
+
+/** How many records this archive holds in [section]. */
+fun MasterBackup.countIn(section: String): Int = when (section) {
+    VaultSection.LOGINS -> logins.size
+    VaultSection.CARDS -> artifacts.size
+    VaultSection.NOTES -> prophecies.size
+    VaultSection.CHRONICLES -> chronicles.size
+    VaultSection.LEDGER -> ledger.size + accounts.size
+    VaultSection.CASHBOOK -> cashBook.size
+    else -> 0
+}
+
+/**
+ * A copy holding only [wanted], tagged with what it carries — the shape a scoped
+ * export writes. A full-vault export stays untagged so older builds keep reading it.
+ */
+fun MasterBackup.scopedTo(wanted: Collection<String>): MasterBackup {
+    val keep = wanted.toSet()
+    return MasterBackup(
+        logins = if (VaultSection.LOGINS in keep) logins else emptyList(),
+        artifacts = if (VaultSection.CARDS in keep) artifacts else emptyList(),
+        chronicles = if (VaultSection.CHRONICLES in keep) chronicles else emptyList(),
+        prophecies = if (VaultSection.NOTES in keep) prophecies else emptyList(),
+        ledger = if (VaultSection.LEDGER in keep) ledger else emptyList(),
+        accounts = if (VaultSection.LEDGER in keep) accounts else emptyList(),
+        cashBook = if (VaultSection.CASHBOOK in keep) cashBook else emptyList(),
+        sections = if (keep.containsAll(VaultSection.ALL)) null
+        else VaultSection.ALL.filter { it in keep },
+        timestamp = System.currentTimeMillis()
+    )
+}
 
 data class LoginEntity(
     val id: Int = 0,

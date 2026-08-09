@@ -13,21 +13,30 @@ import com.nikhil.sentinelx.desktop.core.format.MasterBackup
 import com.nikhil.sentinelx.desktop.core.format.ProphecyEntity
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
 import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
+import com.nikhil.sentinelx.desktop.core.format.VaultMerge
+import com.nikhil.sentinelx.desktop.core.format.VaultSection
 import com.nikhil.sentinelx.desktop.core.format.referencedImages
+import com.nikhil.sentinelx.desktop.core.format.scopedTo
 import com.nikhil.sentinelx.desktop.core.store.LocalCrypto
 import com.nikhil.sentinelx.desktop.core.store.VaultStore
 import java.io.File
 import java.util.UUID
 
-/** Which top-level section the sidebar has selected. */
-enum class Section(val label: String, val glyph: String) {
-    OVERVIEW("Overview", "ᚦ"),
-    LOGINS("Logins", "ᛗ"),
-    CARDS("Cards", "ᚠ"),
-    NOTES("Notes", "ᚱ"),
-    CHRONICLES("Chronicles", "ᛀ"),
-    LEDGER("Ledger", "ᚢ"),
-    CASHBOOK("Cash Book", "ᛃ")
+/**
+ * Which top-level section the sidebar has selected.
+ *
+ * [wire] is the matching [VaultSection] constant, or null for Overview, which is a
+ * view over everything rather than a store of its own. It is what lets a pane export
+ * or import just its own records.
+ */
+enum class Section(val label: String, val glyph: String, val wire: String?) {
+    OVERVIEW("Overview", "ᚦ", null),
+    LOGINS("Logins", "ᛗ", VaultSection.LOGINS),
+    CARDS("Cards", "ᚠ", VaultSection.CARDS),
+    NOTES("Notes", "ᚱ", VaultSection.NOTES),
+    CHRONICLES("Chronicles", "ᛀ", VaultSection.CHRONICLES),
+    LEDGER("Ledger", "ᚢ", VaultSection.LEDGER),
+    CASHBOOK("Cash Book", "ᛃ", VaultSection.CASHBOOK)
 }
 
 /**
@@ -92,18 +101,34 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
 
     /**
      * Reads a Migration Seal and returns its contents WITHOUT committing anything.
-     * The caller shows the counts first — import replaces the vault wholesale, so
-     * the user should see what they are about to get before it happens.
+     * The caller shows the counts first — the user should see what they are about to
+     * get, and what it will cost them, before it happens.
      */
     fun previewArchive(file: File, password: CharArray): SxvArchive.Payload =
         SxvArchive.read(file, password)
 
-    /** Commits a previously previewed archive, replacing everything. */
-    fun adoptArchive(payload: SxvArchive.Payload): Boolean = guard("Importing archive…") {
+    /** What folding [payload] into the current vault would add, skip and collide with. */
+    fun planImport(payload: SxvArchive.Payload): VaultMerge.Plan =
+        VaultMerge.preview(backup, payload.backup)
+
+    /**
+     * Commits a previously previewed archive under [mode] and [policy].
+     *
+     * Only images the resulting vault actually references are stored. Copying the
+     * archive's whole image set in would leave blobs behind for records the merge
+     * skipped, and on a Replace they would be blobs for records that no longer exist.
+     */
+    fun adoptArchive(
+        payload: SxvArchive.Payload,
+        mode: VaultMerge.Mode = VaultMerge.Mode.REPLACE,
+        policy: VaultMerge.DuplicatePolicy = VaultMerge.DuplicatePolicy.SKIP
+    ): Boolean = guard("Importing archive…") {
         val active = session ?: error("Vault is locked")
-        payload.images.forEach { (name, bytes) -> active.putImage(name, bytes) }
-        active.save(payload.backup)
-        backup = payload.backup
+        val result = VaultMerge.apply(backup, payload.backup, mode, policy)
+        val needed = result.vault.referencedImages()
+        payload.images.forEach { (name, bytes) -> if (name in needed) active.putImage(name, bytes) }
+        active.save(result.vault)
+        backup = result.vault
         true
     } ?: false
 
@@ -278,12 +303,24 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
      * round trip is symmetric. Only referenced images are packed; orphans accumulate
      * on the phone when records are deleted and there is no reason to carry them.
      */
-    fun exportArchive(file: File, password: CharArray): Boolean = guard("Exporting…") {
+    /**
+     * Writes a Migration Seal holding [sections].
+     *
+     * Scoping the payload before collecting images is the point: `referencedImages()`
+     * is read off the *scoped* copy, so a Notes-only archive cannot quietly ship the
+     * photographs of your ID cards along with it.
+     */
+    fun exportArchive(
+        file: File,
+        password: CharArray,
+        sections: Collection<String> = VaultSection.ALL
+    ): Boolean = guard("Exporting…") {
         val active = session ?: error("Vault is locked")
-        val images = backup.referencedImages()
+        val payload = backup.scopedTo(sections)
+        val images = payload.referencedImages()
             .mapNotNull { name -> active.readImage(name)?.let { name to it } }
             .toMap()
-        SxvArchive.write(file, backup, images, password)
+        SxvArchive.write(file, payload, images, password)
         true
     } ?: false
 

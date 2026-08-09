@@ -221,7 +221,7 @@ class CashBookTest {
             val read = SxvArchive.read(file, "correct horse battery staple".toCharArray())
 
             assertEquals(backup.cashBook, read.backup.cashBook)
-            assertEquals(7, read.backup.version)
+            assertEquals(8, read.backup.version)
             // Slips must be packed, which only happens if referencedImages() knows about them.
             assertEquals(setOf("IMG_slip_a.webp", "IMG_slip_b.webp"), read.images.keys)
             assertTrue(read.missingImages().isEmpty())

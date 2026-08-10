@@ -60,40 +60,51 @@ fun AppShell(state: AppState) {
     val shellFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { shellFocus.requestWhenReady() }
 
-    // Ctrl+K anywhere opens global search. Handled at the shell so it works no
-    // matter which pane holds focus.
-    Row(
+    // Ctrl+K anywhere opens global search; Escape dismisses the topmost floating
+    // editor. Handled at the shell so both work no matter which pane holds focus.
+    Box(
         Modifier.fillMaxSize().background(BackgroundDeep)
             .focusRequester(shellFocus)
             .focusable()
             .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.isCtrlPressed && e.key == Key.K) {
-                    paletteOpen = true; true
-                } else false
+                when {
+                    e.type != KeyEventType.KeyDown -> false
+                    e.isCtrlPressed && e.key == Key.K -> { paletteOpen = true; true }
+                    e.key == Key.Escape -> state.panels.closeTop()
+                    else -> false
+                }
             }
     ) {
-        Sidebar(state)
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            SentinelBackground {
-            // Crossfade rather than an instant swap: switching sections is a
-            // deliberate act and a hard cut reads as a flicker.
-            Crossfade(
-                targetState = state.section,
-                animationSpec = tween(260),
-                label = "section"
-            ) { current ->
-            when (current) {
-                Section.OVERVIEW -> OverviewPane(state)
-                Section.LOGINS -> LoginsPane(state)
-                Section.CARDS -> CardsPane(state)
-                Section.NOTES -> NotesPane(state)
-                Section.CHRONICLES -> ChroniclesPane(state)
-                Section.LEDGER -> LedgerPane(state)
-                Section.CASHBOOK -> CashBookPane(state)
-            }
-            }
+        Row(Modifier.fillMaxSize()) {
+            Sidebar(state)
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                SentinelBackground {
+                // Crossfade rather than an instant swap: switching sections is a
+                // deliberate act and a hard cut reads as a flicker.
+                Crossfade(
+                    targetState = state.section,
+                    animationSpec = tween(260),
+                    label = "section"
+                ) { current ->
+                when (current) {
+                    Section.OVERVIEW -> OverviewPane(state)
+                    Section.LOGINS -> LoginsPane(state)
+                    Section.CARDS -> CardsPane(state)
+                    Section.NOTES -> NotesPane(state)
+                    Section.CHRONICLES -> ChroniclesPane(state)
+                    Section.LEDGER -> LedgerPane(state)
+                    Section.CASHBOOK -> CashBookPane(state)
+                }
+                }
+                }
             }
         }
+
+        // Above the entire frame, sidebar included — a panel dragged over the
+        // navigation should not disappear behind it. Outside the panels themselves
+        // this layer is transparent to the pointer, so everything underneath keeps
+        // working while an editor is open.
+        PanelHost(state)
     }
 
     if (paletteOpen) {

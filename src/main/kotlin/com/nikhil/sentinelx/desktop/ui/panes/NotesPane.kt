@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.ProphecyEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -60,9 +61,6 @@ fun NotesPane(state: AppState) {
 
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
-
-    var editing by remember { mutableStateOf<ProphecyEntity?>(null) }
-    var creating by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
@@ -110,18 +108,15 @@ fun NotesPane(state: AppState) {
 
             Box(Modifier.weight(1f).fillMaxHeight().padding(32.dp)) {
                 if (selected == null) EmptyState("ᚱ", "NOTHING SELECTED", "Choose a note")
-                else NoteReader(selected) { editing = selected }
+                else NoteReader(selected) { state.panels.open(PanelRequest.Note(selected)) }
             }
         }
     }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-            AddButton(onClick = { creating = true })
+            AddButton(onClick = { state.panels.open(PanelRequest.Note(null)) })
         }
     }
-
-    if (creating) NoteEditor(state, null) { creating = false }
-    editing?.let { target -> NoteEditor(state, target) { editing = null } }
 }
 
 /** Horizontal overflow without a scrollbar — the chip row is short by design. */

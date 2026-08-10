@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
 import com.nikhil.sentinelx.desktop.core.format.pageFilenames
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -58,9 +59,6 @@ fun ChroniclesPane(state: AppState) {
 
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
-
-    var editing by remember { mutableStateOf<ChronicleEntity?>(null) }
-    var creating by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
@@ -93,18 +91,15 @@ fun ChroniclesPane(state: AppState) {
 
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 if (selected == null) EmptyState("ᛀ", "NOTHING SELECTED", "Choose a document")
-                else ChronicleReader(selected, state) { editing = selected }
+                else ChronicleReader(selected, state) { state.panels.open(PanelRequest.Chronicle(selected)) }
             }
         }
     }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-            AddButton(onClick = { creating = true })
+            AddButton(onClick = { state.panels.open(PanelRequest.Chronicle(null)) })
         }
     }
-
-    if (creating) ChronicleEditor(state, null) { creating = false }
-    editing?.let { t -> ChronicleEditor(state, t) { editing = null } }
 }
 
 @Composable

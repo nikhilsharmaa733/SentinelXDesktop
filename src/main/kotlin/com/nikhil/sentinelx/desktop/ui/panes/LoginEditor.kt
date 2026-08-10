@@ -2,7 +2,9 @@ package com.nikhil.sentinelx.desktop.ui.panes
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -12,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.audit.PasswordGenerator
@@ -75,8 +78,57 @@ fun LoginEditor(
     ) {
         EditorField(site, { site = it }, "Site", placeholder = "Github")
 
-        // Near-miss warning. Site names are title-cased on save, so "github" and
-        // "GitHub" collapse — but "Git hub" would silently become its own group.
+        // Offers the sites already in the vault as you type, the way the phone's
+        // AddLoginScreen does. Logins are grouped by site name, so a second account on
+        // an existing service has to land on the *same* string — picking it beats
+        // spelling it, and this is the field where a typo costs the most.
+        val knownSites = remember(state.backup.logins) {
+            state.backup.logins.map { it.siteName }.distinct().sorted()
+        }
+        val suggestions = remember(site, knownSites) {
+            val typed = site.trim()
+            if (typed.isEmpty()) emptyList()
+            else {
+                // Prefix matches first — they are what you were most likely typing —
+                // then anything else containing it, which the phone does not offer.
+                val byPrefix = knownSites.filter {
+                    it.startsWith(typed, true) && !it.equals(typed, true)
+                }
+                val byContent = knownSites.filter {
+                    it.contains(typed, true) && !it.equals(typed, true) && it !in byPrefix
+                }
+                (byPrefix + byContent).take(5)
+            }
+        }
+        if (suggestions.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                    .horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "EXISTING", color = TextMuted, fontSize = 8.sp,
+                    letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(10.dp))
+                suggestions.forEach { name ->
+                    Box(
+                        Modifier.padding(end = 6.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(CyanGlow.copy(0.10f))
+                            .clickable { site = name }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(name, color = CyanGlow, fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
+
+        // Near-miss warning. Catches what the suggestions above cannot: site names are
+        // title-cased on save, so "github" and "GitHub" collapse — but "Git hub"
+        // matches neither by prefix nor by content and would silently become its own
+        // group.
         val nearMatch = remember(site, state.backup.logins) {
             val trimmed = site.trim()
             if (trimmed.length < 3) null

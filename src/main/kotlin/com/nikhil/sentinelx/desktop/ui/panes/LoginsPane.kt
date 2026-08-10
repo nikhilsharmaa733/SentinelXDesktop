@@ -26,6 +26,7 @@ import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.core.audit.Strength
 import com.nikhil.sentinelx.desktop.core.format.LoginEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -43,9 +44,6 @@ import com.nikhil.sentinelx.desktop.ui.theme.*
 fun LoginsPane(state: AppState) {
     var query by remember { mutableStateOf("") }
     var selectedSite by remember { mutableStateOf<String?>(null) }
-    var editing by remember { mutableStateOf<LoginEntity?>(null) }
-    var creating by remember { mutableStateOf(false) }
-    var prefillSite by remember { mutableStateOf<String?>(null) }
 
     val logins = state.backup.logins
     val findings = remember(logins) { PasswordAudit.run(logins).associateBy { it.login.id } }
@@ -134,8 +132,10 @@ fun LoginsPane(state: AppState) {
                             site = selected.first,
                             entries = selected.second,
                             findings = findings,
-                            onEdit = { editing = it },
-                            onAddAnother = { prefillSite = selected.first; creating = true }
+                            onEdit = { state.panels.open(PanelRequest.Login(it)) },
+                            onAddAnother = {
+                                state.panels.open(PanelRequest.Login(null, selected.first))
+                            }
                         )
                     }
                 }
@@ -143,14 +143,9 @@ fun LoginsPane(state: AppState) {
         }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-            AddButton(onClick = { prefillSite = null; creating = true })
+            AddButton(onClick = { state.panels.open(PanelRequest.Login(null)) })
         }
     }
-
-    if (creating) {
-        LoginEditor(state, null, prefillSite) { creating = false; prefillSite = null }
-    }
-    editing?.let { target -> LoginEditor(state, target, null) { editing = null } }
 }
 
 @Composable

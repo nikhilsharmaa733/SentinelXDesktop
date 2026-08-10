@@ -24,6 +24,7 @@ import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.CsvExport
 import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -68,10 +69,6 @@ fun LedgerPane(state: AppState) {
         }.sortedByDescending { it.timestamp }
     }
 
-    var editingTx by remember { mutableStateOf<TransactionEntity?>(null) }
-    var creatingTx by remember { mutableStateOf(false) }
-    var editingAccount by remember { mutableStateOf<AccountEntity?>(null) }
-    var creatingAccount by remember { mutableStateOf(false) }
     var exportCsv by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
@@ -83,7 +80,7 @@ fun LedgerPane(state: AppState) {
                 }
             }
             TransferActions(state, Section.LEDGER)
-            TextButton(onClick = { creatingAccount = true }) {
+            TextButton(onClick = { state.panels.open(PanelRequest.Account(null)) }) {
                 Text("+ ACCOUNT", color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
         }
@@ -112,7 +109,7 @@ fun LedgerPane(state: AppState) {
                             balance = allTx.filter { it.accountId == account.id }.netBalance(),
                             selected = active == account.id,
                             accent = account.color(),
-                            onEdit = { editingAccount = account }
+                            onEdit = { state.panels.open(PanelRequest.Account(account)) }
                         ) { accountId = account.id }
                     }
                     item { Spacer(Modifier.height(20.dp)) }
@@ -145,7 +142,7 @@ fun LedgerPane(state: AppState) {
                             }
                             item { CategoryBreakdown(transactions) }
                             items(transactions, key = { it.id }) { tx ->
-                                TransactionRow(tx) { editingTx = tx }
+                                TransactionRow(tx) { state.panels.open(PanelRequest.Transaction(tx, active)) }
                             }
                             item { Spacer(Modifier.height(20.dp)) }
                         }
@@ -157,18 +154,14 @@ fun LedgerPane(state: AppState) {
 
         if (accounts.isNotEmpty()) {
             Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-                AddButton(onClick = { creatingTx = true })
+                AddButton(onClick = { state.panels.open(PanelRequest.Transaction(null, active)) })
             }
         }
     }
 
-    if (creatingTx) TransactionEditor(state, null, active) { creatingTx = false }
-    editingTx?.let { t -> TransactionEditor(state, t, active) { editingTx = null } }
     if (exportCsv) {
         CsvExportDialog(transactions, accounts) { exportCsv = false }
     }
-    if (creatingAccount) AccountEditor(state, null) { creatingAccount = false }
-    editingAccount?.let { a -> AccountEditor(state, a) { editingAccount = null } }
 }
 
 

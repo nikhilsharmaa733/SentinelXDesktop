@@ -64,6 +64,13 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     /** Null until unlocked. Zeroed on lock. */
     private var session: VaultStore.Session? = null
 
+    /**
+     * Open floating editors. Lives here rather than in a pane so a panel survives
+     * switching section — the point of them is holding several records at once, and
+     * they are frequently in different sections.
+     */
+    val panels = PanelHostState()
+
     val vaultExists: Boolean get() = store.exists
     val vaultLocation: String get() = VaultStore.defaultDir().path
 
@@ -95,6 +102,9 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         favourites = emptySet()
         locked = true
         section = Section.OVERVIEW
+        // A half-typed password sitting in an open editor would otherwise survive the
+        // lock in plain sight.
+        panels.closeAll()
     }
 
     // ── Import ────────────────────────────────────────────────────────────────
@@ -129,6 +139,10 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         payload.images.forEach { (name, bytes) -> if (name in needed) active.putImage(name, bytes) }
         active.save(result.vault)
         backup = result.vault
+        // An editor opened before the import holds a record the merge may have just
+        // replaced, renamed or dropped. Saving it afterwards would quietly undo the
+        // import for that one row.
+        panels.closeAll()
         true
     } ?: false
 
@@ -291,6 +305,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         val previous = active.loadVersion(timestamp)
         active.save(previous)
         backup = previous
+        panels.closeAll()
         true
     } ?: false
 

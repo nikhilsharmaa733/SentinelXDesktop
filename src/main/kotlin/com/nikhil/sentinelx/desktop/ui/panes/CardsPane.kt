@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -53,9 +54,6 @@ fun CardsPane(state: AppState) {
 
     val selected = filtered.firstOrNull { it.id == selectedId }
         ?: filtered.firstOrNull().also { selectedId = it?.id }
-
-    var editing by remember { mutableStateOf<ArtifactEntity?>(null) }
-    var creating by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
@@ -88,18 +86,15 @@ fun CardsPane(state: AppState) {
 
             Box(Modifier.weight(1f).fillMaxHeight().padding(28.dp)) {
                 if (selected == null) EmptyState("ᚠ", "NOTHING SELECTED", "Choose an artifact")
-                else ArtifactDetail(selected, state) { editing = selected }
+                else ArtifactDetail(selected, state) { state.panels.open(PanelRequest.Card(selected)) }
             }
         }
     }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-            AddButton(onClick = { creating = true })
+            AddButton(onClick = { state.panels.open(PanelRequest.Card(null)) })
         }
     }
-
-    if (creating) ArtifactEditor(state, null) { creating = false }
-    editing?.let { t -> ArtifactEditor(state, t) { editing = null } }
 }
 
 /** Field captions per document type, mirroring the phone's idRunes map. */

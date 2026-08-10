@@ -125,12 +125,20 @@ Output is counts and integrity checks only — no field values — so it is safe
   evening/morning day cards, the note-by-note `DenominationCounter`, reconciliation
   against the stated amount, carry-forward of last night's tally, note inventory,
   verification workflow, and CSV + printable-HTML export (`core/format/CashBookExport.kt`).
-  Added `cashBook` to `MasterBackup` and took the archive to **v7**.
+  Added `cashBook` to `MasterBackup` and took the archive to **v7**. Every movement on a
+  day is a full tile of its own — the evening and morning slots lead the card and still
+  prompt when empty, but a third or fourth entry is no longer demoted to a sub-row.
 - ✅ **Merge import and scoped transfers** (`core/format/VaultMerge.kt`,
   `ui/components/TransferDialogs.kt`) — import offers Merge or Replace, and on a clash
   offers do-not-copy / replace / keep-both, with per-section counts shown *before* the
   choice. Every pane also carries its own IMPORT/EXPORT for just its records. Added
   `sections` to `MasterBackup` and took the archive to **v8**.
+- ✅ **Floating editor panels** (`ui/Panels.kt`) — every add/edit form is a draggable,
+  resizable, non-modal panel instead of a modal dialog. Several can be open at once,
+  across sections, with the pane behind them still live. Resize is per-panel and
+  deliberately not persisted; reopening restores the editor's own default size.
+- ✅ **Login site suggestions** — the login editor offers the sites already in the vault
+  as you type, matching the phone's `AddLoginScreen`.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
@@ -201,6 +209,37 @@ Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the p
   into the parent's size. Same family as the `weight(1f)` rule below: **any
   `fillMax*`/`fillMaxSize` inside a component you intend to reuse is a constraint bug
   waiting for a bounded parent.**
+
+- **Panels are non-modal, and that is load-bearing.** The pane behind an open editor
+  keeps taking clicks and scrolls, so a panel must own a `pointerInput` node over its
+  whole area or clicks fall straight through it — a `background` is a draw modifier and
+  stops nothing. `PanelHost`'s raise-on-press handler doubles as that node. Equally, the
+  host `Box` must stay free of backgrounds and pointer modifiers, or it would swallow
+  every click aimed at the app underneath.
+
+- **Never let two panels edit one record.** Each holds the snapshot it opened with, so
+  the second to save silently undoes the first. `PanelRequest.identity` prevents it by
+  raising the panel that already has the record. New records have no identity and are
+  free to multiply. Anything that replaces the whole vault — import, version restore,
+  lock — calls `panels.closeAll()` for the same reason.
+
+- **A `pointerInput` key change cancels a drag in flight.** The resize grip was keyed on
+  the panel's measured content height; resizing changed the height, the height changed
+  the key, Compose rebuilt the gesture detector, and the drag died about a centimetre
+  in. Gesture modifiers on anything they themselves resize must be keyed on `Unit` and
+  read changing values through `rememberUpdatedState`.
+
+- **A parent's `onSizeChanged` fires after its children are measured.** `PanelHost` first
+  used `fillMaxSize()` + `onSizeChanged` to learn its own size, so the first panel asked
+  where to centre itself while the host still measured zero, gave up, and — since its own
+  size never changed again — was never asked twice. It rendered at alpha 0 forever.
+  `BoxWithConstraints` knows the size before the content composes; use it when a child's
+  placement depends on the parent's size.
+
+- **Cascading panels must share one anchor.** Centring each panel on its own width moved
+  a 720-wide editor further left than the 48px cascade moved it right, so it landed
+  exactly on top of a 560-wide one and hid it completely. `initialOffset` centres on a
+  nominal width so the step is the only thing that separates them.
 
 - **Sidecar, not schema.** Favourites and any future desktop-only state go in
   `Session.readSidecar`/`writeSidecar`, never in `MasterBackup`. That data class is

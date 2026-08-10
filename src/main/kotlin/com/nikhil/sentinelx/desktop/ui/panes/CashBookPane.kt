@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.*
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -95,8 +96,6 @@ fun CashBookPane(state: AppState) {
         if (end == null) all else all.filter { it.entryDate <= end }
     }
 
-    var editing by remember { mutableStateOf<CashEntryEntity?>(null) }
-    var creating by remember { mutableStateOf<NewEntrySeed?>(null) }
     var exporting by remember { mutableStateOf(false) }
     var viewingSlips by remember { mutableStateOf<List<String>?>(null) }
 
@@ -119,7 +118,7 @@ fun CashBookPane(state: AppState) {
                     }
                 }
                 TransferActions(state, Section.CASHBOOK)
-                TextButton(onClick = { creating = NewEntrySeed(todayBusinessDate(), CashBook.SLOT_EVENING) }) {
+                TextButton(onClick = { state.openCashEntry(NewEntrySeed(todayBusinessDate(), CashBook.SLOT_EVENING)) }) {
                     Text(
                         "+ ENTRY", color = CyanGlow, fontSize = 11.sp,
                         fontWeight = FontWeight.Bold, letterSpacing = 1.sp
@@ -195,8 +194,8 @@ fun CashBookPane(state: AppState) {
                                     DayCard(
                                         day = day,
                                         state = state,
-                                        onEdit = { editing = it },
-                                        onAdd = { seed -> creating = seed },
+                                        onEdit = { state.panels.open(PanelRequest.CashEntry(it, it.entryDate, it.slot)) },
+                                        onAdd = { seed -> state.openCashEntry(seed) },
                                         onViewSlips = { viewingSlips = it }
                                     )
                                 }
@@ -209,22 +208,10 @@ fun CashBookPane(state: AppState) {
         }
 
         Box(Modifier.align(Alignment.BottomEnd).padding(28.dp)) {
-            AddButton(onClick = { creating = NewEntrySeed(todayBusinessDate(), CashBook.SLOT_EVENING) })
+            AddButton(onClick = { state.openCashEntry(NewEntrySeed(todayBusinessDate(), CashBook.SLOT_EVENING)) })
         }
     }
 
-    creating?.let { seed ->
-        CashEntryEditor(
-            state = state,
-            existing = null,
-            defaultDate = seed.date,
-            defaultSlot = seed.slot,
-            seedDenominations = seed.denominations
-        ) { creating = null }
-    }
-    editing?.let { entry ->
-        CashEntryEditor(state, entry, entry.entryDate, entry.slot) { editing = null }
-    }
     if (exporting) {
         CashBookExportDialog(
             state = state,
@@ -245,6 +232,9 @@ private data class NewEntrySeed(
     val slot: String,
     val denominations: Map<Int, Int> = emptyMap()
 )
+
+private fun AppState.openCashEntry(seed: NewEntrySeed) =
+    panels.open(PanelRequest.CashEntry(null, seed.date, seed.slot, seed.denominations))
 
 // ── Month rail ───────────────────────────────────────────────────────────────
 
@@ -383,6 +373,16 @@ private fun AttentionStrip(pending: Int, mismatches: Int) {
 
 // ── Day card ─────────────────────────────────────────────────────────────────
 
+/**
+ * One calendar day, and every movement recorded against it.
+ *
+ * Each entry is a tile of its own. An earlier version privileged the first evening and
+ * the first morning and demoted everything else to a cramped one-line row, which made a
+ * second handover on a busy day look like a footnote to the first — the two are the same
+ * kind of record and carry the same note counts, verification and slips. The pair is
+ * still what the ritual checks, so the evening and morning slots keep their place at the
+ * front of the card and still prompt when nothing has been recorded in them.
+ */
 @Composable
 private fun DayCard(
     day: DayGroup,
@@ -392,12 +392,7 @@ private fun DayCard(
     onViewSlips: (List<String>) -> Unit
 ) {
     val date = businessDateOf(day.date)
-    val evening = day.entries.firstOrNull { it.slot == CashBook.SLOT_EVENING }
-    val morning = day.entries.firstOrNull { it.slot == CashBook.SLOT_MORNING }
-    val others = day.entries.filter {
-        it.slot != CashBook.SLOT_EVENING && it.slot != CashBook.SLOT_MORNING
-    } + day.entries.filter { it.slot == CashBook.SLOT_EVENING }.drop(1) +
-        day.entries.filter { it.slot == CashBook.SLOT_MORNING }.drop(1)
+    val cells = remember(day) { dayCells(day) }
 
     val net = day.entries.netPosition()
     val settled = abs(net) < CashBook.EPSILON
@@ -420,6 +415,15 @@ private fun DayCard(
                     Text(date.format(weekday), color = TextMuted, fontSize = 9.sp, letterSpacing = 1.sp)
                 }
                 Spacer(Modifier.weight(1f))
+                // Without this the only way to record a third movement on a past day was
+                // to open a new entry for today and correct the date by hand.
+                TextButton(onClick = { onAdd(NewEntrySeed(day.date, CashBook.SLOT_OTHER)) }) {
+                    Text(
+                        "+ ADD", color = CyanGlow, fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
                 if (allVerified) Pill("VERIFIED", IncomeGreen) else Pill("PENDING", AmberWarn)
                 Spacer(Modifier.width(8.dp))
                 Column(horizontalAlignment = Alignment.End) {
@@ -437,53 +441,106 @@ private fun DayCard(
 
             Spacer(Modifier.height(14.dp))
 
-            Row(Modifier.fillMaxWidth()) {
-                Box(Modifier.weight(1f)) {
-                    if (evening != null) {
-                        HalfSlot(evening, "EVENING", "Brought home", state, onEdit, onViewSlips)
-                    } else {
-                        // Carrying the morning's tally back into an unrecorded evening is
-                        // rarely right, so the empty evening starts blank.
-                        EmptySlot("EVENING", "Nothing recorded for tonight") {
-                            onAdd(NewEntrySeed(day.date, CashBook.SLOT_EVENING))
-                        }
-                    }
-                }
-                Spacer(Modifier.width(12.dp))
-                Box(Modifier.weight(1f)) {
-                    if (morning != null) {
-                        HalfSlot(morning, "MORNING", "Taken to office", state, onEdit, onViewSlips)
-                    } else {
-                        // The money that went home almost always goes back untouched, so
-                        // the empty morning offers last night's exact tally in one click.
-                        // Retyping 120 notes because the app couldn't guess is the kind of
-                        // friction that gets a tool abandoned by the second week.
-                        EmptySlot(
-                            "MORNING",
-                            if (evening != null) "Carry back ${formatMoney(evening.amount)}"
-                            else "Nothing recorded for this morning"
-                        ) {
-                            onAdd(
-                                NewEntrySeed(
-                                    date = day.date,
-                                    slot = CashBook.SLOT_MORNING,
-                                    denominations = evening?.denominationCounts() ?: emptyMap()
+            // Two to a row. A day almost always has exactly the pair, so one row is the
+            // common case and extra movements simply continue onto the next.
+            cells.chunked(2).forEachIndexed { row, pair ->
+                if (row > 0) Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    pair.forEachIndexed { column, cell ->
+                        if (column > 0) Spacer(Modifier.width(12.dp))
+                        Box(Modifier.weight(1f)) {
+                            when (cell) {
+                                is DayCell.Recorded -> HalfSlot(
+                                    cell.entry, cell.label, cell.hint, state, onEdit, onViewSlips
                                 )
-                            )
+                                is DayCell.Prompt -> EmptySlot(cell.label, cell.hint) { onAdd(cell.seed) }
+                            }
                         }
                     }
-                }
-            }
-
-            if (others.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                others.forEach { entry ->
-                    OtherEntryRow(entry) { onEdit(entry) }
+                    // Keeps a lone tile half-width rather than letting it stretch across
+                    // the card and read as a different kind of thing from its neighbours.
+                    if (pair.size == 1) {
+                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.weight(1f))
+                    }
                 }
             }
         }
     }
 }
+
+/** A tile in a day card: something recorded, or the prompt for a slot still empty. */
+private sealed interface DayCell {
+    data class Recorded(
+        val entry: CashEntryEntity,
+        val label: String,
+        val hint: String
+    ) : DayCell
+
+    data class Prompt(val label: String, val hint: String, val seed: NewEntrySeed) : DayCell
+}
+
+private fun dayCells(day: DayGroup): List<DayCell> {
+    val evening = day.entries.filter { it.slot == CashBook.SLOT_EVENING }.sortedBy { it.timestamp }
+    val morning = day.entries.filter { it.slot == CashBook.SLOT_MORNING }.sortedBy { it.timestamp }
+    val rest = day.entries
+        .filter { it.slot != CashBook.SLOT_EVENING && it.slot != CashBook.SLOT_MORNING }
+        .sortedBy { it.timestamp }
+
+    val cells = mutableListOf<DayCell>()
+
+    if (evening.isEmpty()) {
+        // Carrying the morning's tally back into an unrecorded evening is rarely right,
+        // so the empty evening starts blank.
+        cells += DayCell.Prompt(
+            "EVENING",
+            "Nothing recorded for tonight",
+            NewEntrySeed(day.date, CashBook.SLOT_EVENING)
+        )
+    } else {
+        evening.forEachIndexed { i, entry ->
+            cells += DayCell.Recorded(entry, numbered("EVENING", i, evening.size), "Brought home")
+        }
+    }
+
+    if (morning.isEmpty()) {
+        // The money that went home almost always goes back untouched, so the empty
+        // morning offers last night's exact tally in one click. Retyping 120 notes
+        // because the app couldn't guess is the kind of friction that gets a tool
+        // abandoned by the second week.
+        cells += DayCell.Prompt(
+            "MORNING",
+            if (evening.isNotEmpty()) "Carry back ${formatMoney(evening.last().amount)}"
+            else "Nothing recorded for this morning",
+            NewEntrySeed(
+                date = day.date,
+                slot = CashBook.SLOT_MORNING,
+                denominations = evening.lastOrNull()?.denominationCounts() ?: emptyMap()
+            )
+        )
+    } else {
+        morning.forEachIndexed { i, entry ->
+            cells += DayCell.Recorded(entry, numbered("MORNING", i, morning.size), "Taken to office")
+        }
+    }
+
+    // Numbered within their own slot, not across all of them: two OTHER entries beside
+    // one LUNCH entry should read "OTHER 1, OTHER 2, LUNCH", not "1, 2, 3".
+    rest.groupBy { it.slot.ifBlank { CashBook.SLOT_OTHER } }.forEach { (slot, group) ->
+        group.forEachIndexed { i, entry ->
+            cells += DayCell.Recorded(
+                entry,
+                numbered(slot, i, group.size),
+                if (entry.isIn()) "Cash received" else "Cash paid out"
+            )
+        }
+    }
+
+    return cells
+}
+
+private fun numbered(label: String, index: Int, total: Int): String =
+    if (total > 1) "$label · ${index + 1}" else label
 
 @Composable
 private fun HalfSlot(
@@ -585,39 +642,6 @@ private fun EmptySlot(label: String, hint: String, onAdd: () -> Unit) {
         Text("+ Record", color = GoldTarnished, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(3.dp))
         Text(hint, color = TextMuted, fontSize = 9.sp)
-    }
-}
-
-@Composable
-private fun OtherEntryRow(entry: CashEntryEntity, onEdit: () -> Unit) {
-    val accent = if (entry.isIn()) IncomeGreen else ExpenseRed
-    Row(
-        Modifier.fillMaxWidth().padding(top = 5.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(SurfaceStone.copy(0.25f))
-            .clickable { onEdit() }
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier.size(22.dp).clip(CircleShape).background(accent.copy(0.12f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(if (entry.isIn()) "+" else "−", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Black)
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            entry.particulars.ifBlank { "Other movement" },
-            color = TextSubtle, fontSize = 11.sp, modifier = Modifier.weight(1f), maxLines = 1
-        )
-        if (!entry.isVerified()) {
-            Pill("PENDING", AmberWarn)
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(
-            (if (entry.isIn()) "+" else "−") + formatMoney(entry.amount),
-            color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold
-        )
     }
 }
 

@@ -15,15 +15,16 @@ package com.nikhil.sentinelx.desktop.core.format
  * share an id. Identity is instead the **unique index the Room schema already declares**
  * for each table:
  *
- * | Section    | Identity                                   |
- * |------------|--------------------------------------------|
- * | Logins     | `siteName` + `username`                    |
- * | Cards      | `label1` + `label2`                        |
- * | Chronicles | `title`                                    |
- * | Notes      | `title`                                    |
- * | Accounts   | `name`                                     |
- * | Ledger     | account + `title` + `amount` + `timestamp` |
- * | Cash Book  | date + slot + direction + amount + text    |
+ * | Section      | Identity                                   |
+ * |--------------|--------------------------------------------|
+ * | Logins       | `siteName` + `username`                    |
+ * | Cards        | `label1` + `label2`                        |
+ * | Chronicles   | `title`                                    |
+ * | Notes        | `title`                                    |
+ * | Note folders | `name`                                     |
+ * | Accounts     | `name`                                     |
+ * | Ledger       | account + `title` + `amount` + `timestamp` |
+ * | Cash Book    | date + slot + direction + amount + text    |
  *
  * Using anything else would let the merge emit a list the database then silently
  * collapses: every `@Insert` in this project is `OnConflictStrategy.REPLACE`, so a
@@ -145,6 +146,7 @@ object VaultMerge {
                 artifacts = pick(carried, VaultSection.CARDS, incoming.artifacts, current.artifacts),
                 chronicles = pick(carried, VaultSection.CHRONICLES, incoming.chronicles, current.chronicles),
                 prophecies = pick(carried, VaultSection.NOTES, incoming.prophecies, current.prophecies),
+                noteFolders = pick(carried, VaultSection.NOTES, incoming.noteFolders, current.noteFolders),
                 ledger = pick(carried, VaultSection.LEDGER, incoming.ledger, current.ledger),
                 accounts = pick(carried, VaultSection.LEDGER, incoming.accounts, current.accounts),
                 cashBook = pick(carried, VaultSection.CASHBOOK, incoming.cashBook, current.cashBook),
@@ -202,23 +204,9 @@ object VaultMerge {
             ).also { stats += it.stats }.merged
         } else current.chronicles
 
-        val prophecies = if (VaultSection.NOTES in carried) {
-            reconcile(
-                VaultSection.NOTES, current.prophecies, incoming.prophecies, policy,
-                identity = { norm(it.title) },
-                // noteType() rather than the raw field: the two apps' Gson defaults
-                // differ for an absent `type` (null here, "TEXT" on the JVM's no-arg
-                // constructor), and the normalised accessor keeps the same archive
-                // classifying identically on both.
-                fingerprint = {
-                    join(
-                        it.title, it.content, it.sigil, it.noteType(), it.isPinned,
-                        it.isArchived, it.isLocked, it.colorHex, it.checkItems, it.folder
-                    )
-                },
-                rename = { note, n -> note.copy(title = mark(note.title, n)) }
-            ).also { stats += it.stats }.merged
-        } else current.prophecies
+        val notes = if (VaultSection.NOTES in carried) {
+            mergeNotes(current, incoming, policy).also { stats += it.stats }
+        } else null
 
         val cashBook = if (VaultSection.CASHBOOK in carried) {
             reconcile(
@@ -250,7 +238,8 @@ object VaultMerge {
                 logins = logins,
                 artifacts = artifacts,
                 chronicles = chronicles,
-                prophecies = prophecies,
+                prophecies = notes?.prophecies ?: current.prophecies,
+                noteFolders = notes?.folders ?: current.noteFolders,
                 ledger = ledger?.transactions ?: current.ledger,
                 accounts = ledger?.accounts ?: current.accounts,
                 cashBook = cashBook,
@@ -258,6 +247,88 @@ object VaultMerge {
                 timestamp = System.currentTimeMillis()
             ),
             plan = Plan(VaultSection.ALL.mapNotNull { s -> stats.firstOrNull { it.section == s } })
+        )
+    }
+
+    // ── Notes ─────────────────────────────────────────────────────────────────
+
+    private data class NotesMerge(
+        val folders: List<FolderEntity>,
+        val prophecies: List<ProphecyEntity>,
+        val stats: SectionStats
+    )
+
+    /**
+     * Folders and notes in one step, because a note references its folder by *name*.
+     *
+     * A kept-both folder lands under a marked name, so its incoming notes have to
+     * follow it there — otherwise they would land in the folder it collided with and
+     * inherit that folder's lock (or lose their own). And an incoming note whose
+     * folder differs only in case from a surviving record snaps onto the record's
+     * spelling, keeping "work" and "Work" one folder. Merging the two lists
+     * independently would silently do both wrong things.
+     *
+     * Notes whose folder has no record on either side (implicit folders, and every
+     * pre-v9 archive) pass through untouched.
+     */
+    private fun mergeNotes(
+        current: MasterBackup,
+        incoming: MasterBackup,
+        policy: DuplicatePolicy
+    ): NotesMerge {
+        val folderResult = reconcile(
+            VaultSection.NOTES, current.noteFolders, incoming.noteFolders, policy,
+            identity = { norm(it.name) },
+            fingerprint = {
+                join(it.name, it.colorHex, it.glyph, it.isLocked, it.passcodeHash, it.passcodeSalt)
+            },
+            rename = { folder, n -> folder.copy(name = mark(folder.name, n)) }
+        )
+
+        val folders = folderResult.merged
+        // Canonical spelling for every folder identity that has a record.
+        val displayByIdentity = HashMap<String, String>()
+        folders.forEach { displayByIdentity.putIfAbsent(norm(it.name), it.name) }
+
+        // Identity the incoming folder arrived under → identity it was stored under.
+        val landedAs = folderResult.renamed
+        val remapped = incoming.prophecies.map { note ->
+            val key = norm(note.folder)
+            if (key.isEmpty()) note
+            else {
+                val landed = landedAs[key] ?: key
+                note.copy(folder = displayByIdentity[landed] ?: note.folder)
+            }
+        }
+
+        val noteResult = reconcile(
+            VaultSection.NOTES, current.prophecies, remapped, policy,
+            identity = { norm(it.title) },
+            // noteType() rather than the raw field: the two apps' Gson defaults
+            // differ for an absent `type` (null here, "TEXT" on the JVM's no-arg
+            // constructor), and the normalised accessor keeps the same archive
+            // classifying identically on both.
+            fingerprint = {
+                join(
+                    it.title, it.content, it.sigil, it.noteType(), it.isPinned,
+                    it.isArchived, it.isLocked, it.colorHex, it.checkItems, it.folder
+                )
+            },
+            rename = { note, n -> note.copy(title = mark(note.title, n)) }
+        )
+
+        // One line in the plan, like the ledger: a folder and its notes arrive together.
+        return NotesMerge(
+            folders = folders,
+            prophecies = noteResult.merged,
+            stats = SectionStats(
+                section = VaultSection.NOTES,
+                existing = current.prophecies.size + current.noteFolders.size,
+                incoming = incoming.prophecies.size + incoming.noteFolders.size,
+                fresh = folderResult.stats.fresh + noteResult.stats.fresh,
+                identical = folderResult.stats.identical + noteResult.stats.identical,
+                conflicting = folderResult.stats.conflicting + noteResult.stats.conflicting
+            )
         )
     }
 

@@ -190,6 +190,56 @@ class VaultMergeTest {
     }
 
     @Test
+    fun `a kept-both folder is renamed and its incoming notes follow it there`() {
+        // Same folder name, different lock: the local "Work" is sealed, the incoming
+        // one is not. KEEP_BOTH must not let the incoming notes land inside the sealed
+        // local folder — they follow their own folder to its marked name.
+        val vault = MasterBackup(
+            noteFolders = listOf(FolderEntity(name = "Work", isLocked = true)),
+            prophecies = listOf(note("Local secret").copy(folder = "Work"))
+        )
+        val archive = MasterBackup(
+            noteFolders = listOf(FolderEntity(name = "Work", isLocked = false)),
+            prophecies = listOf(note("Imported memo").copy(folder = "Work"))
+        )
+
+        val merged = VaultMerge.merge(vault, archive, DuplicatePolicy.KEEP_BOTH).vault
+
+        assertTrue(merged.noteFolders.any { it.name == "Work (imported)" })
+        assertEquals("Work", merged.prophecies.single { it.title == "Local secret" }.folder)
+        assertEquals(
+            "Work (imported)",
+            merged.prophecies.single { it.title == "Imported memo" }.folder
+        )
+    }
+
+    @Test
+    fun `an incoming note's folder snaps onto the surviving record's spelling`() {
+        val vault = MasterBackup(noteFolders = listOf(FolderEntity(name = "Work")))
+        val archive = MasterBackup(prophecies = listOf(note("Memo").copy(folder = "work")))
+
+        val merged = VaultMerge.merge(vault, archive, DuplicatePolicy.SKIP).vault
+        assertEquals("Work", merged.prophecies.single().folder)
+    }
+
+    @Test
+    fun `folders differing only in lock or passcode are conflicts`() {
+        val vault = MasterBackup(noteFolders = listOf(FolderEntity(name = "Work")))
+        val archive = MasterBackup(
+            noteFolders = listOf(
+                FolderEntity(name = "Work", isLocked = true, passcodeSalt = "s", passcodeHash = "h")
+            )
+        )
+
+        val plan = VaultMerge.preview(vault, archive)
+        assertEquals(0, plan.identical)
+        assertEquals(1, plan.conflicting)
+
+        val overwritten = VaultMerge.merge(vault, archive, DuplicatePolicy.OVERWRITE).vault
+        assertTrue(overwritten.noteFolders.single().isLocked)
+    }
+
+    @Test
     fun `a note differing only in pin, colour or checklist is a conflict, not identical`() {
         // The fingerprint has to see the v8 fields, or a pin toggled on one device
         // would be classified "already present, field for field" and silently dropped

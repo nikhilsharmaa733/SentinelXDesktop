@@ -9,6 +9,7 @@ import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
 import com.nikhil.sentinelx.desktop.core.format.CashEntryEntity
 import com.nikhil.sentinelx.desktop.core.format.CheckItem
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
+import com.nikhil.sentinelx.desktop.core.format.FolderEntity
 import com.nikhil.sentinelx.desktop.core.format.LoginEntity
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
 import com.nikhil.sentinelx.desktop.core.format.ProphecyEntity
@@ -17,7 +18,11 @@ import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
 import com.nikhil.sentinelx.desktop.core.format.VaultMerge
 import com.nikhil.sentinelx.desktop.core.format.VaultSection
 import com.nikhil.sentinelx.desktop.core.format.encodeCheckItems
+import com.nikhil.sentinelx.desktop.core.format.folderKey
+import com.nikhil.sentinelx.desktop.core.format.folderName
+import com.nikhil.sentinelx.desktop.core.format.hashFolderPasscode
 import com.nikhil.sentinelx.desktop.core.format.itemsToText
+import com.nikhil.sentinelx.desktop.core.format.newFolderSalt
 import com.nikhil.sentinelx.desktop.core.format.referencedImages
 import com.nikhil.sentinelx.desktop.core.format.scopedTo
 import com.nikhil.sentinelx.desktop.core.store.LocalCrypto
@@ -106,7 +111,8 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         locked = true
         section = Section.OVERVIEW
         // A half-typed password sitting in an open editor would otherwise survive the
-        // lock in plain sight.
+        // lock in plain sight — and so would an unsealed folder.
+        unlockedFolders = emptySet()
         panels.closeAll()
     }
 
@@ -203,7 +209,16 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
 
     fun upsertProphecy(note: ProphecyEntity) = mutate { b ->
         val id = if (note.id == 0) nextId(b.prophecies) { it.id } else note.id
-        val entry = note.copy(id = id, timestamp = System.currentTimeMillis())
+        // Snap a hand-typed folder onto an existing spelling — "work" must not fork
+        // a second folder beside "Work". Mirrors the phone's saveProphecy.
+        val typed = note.folderName()
+        val snapped = typed?.let { name ->
+            val key = folderKey(name)
+            b.noteFolders.firstOrNull { folderKey(it.name) == key }?.name
+                ?: b.prophecies.firstOrNull { folderKey(it.folder) == key }?.folderName()
+                ?: name
+        }
+        val entry = note.copy(id = id, folder = snapped, timestamp = System.currentTimeMillis())
         b.copy(prophecies = b.prophecies.replacingOrAdding(entry) { it.id == id })
     }
 
@@ -216,6 +231,135 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
      */
     fun patchProphecy(note: ProphecyEntity) = mutate { b ->
         b.copy(prophecies = b.prophecies.map { if (it.id == note.id) note else it })
+    }
+
+    // ── Note folders ──────────────────────────────────────────────────────────
+    //
+    // The note→folder join is the folder *name* (case-insensitive), which is why
+    // rename cascades over the member notes and why nothing here remaps ids.
+
+    /** Locked folders opened this session, keyed by [folderKey]. Cleared on lock. */
+    var unlockedFolders by mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    fun markFolderUnlocked(name: String) {
+        folderKey(name)?.let { unlockedFolders = unlockedFolders + it }
+    }
+
+    /** Creates or restyles a folder. Renames go through [renameFolder], never here. */
+    fun saveFolder(folder: FolderEntity) = mutate { b ->
+        val id = if (folder.id == 0) nextId(b.noteFolders) { it.id } else folder.id
+        val entry = folder.copy(id = id, name = folder.name.trim(), timestamp = folder.timestamp.orNow())
+        b.copy(noteFolders = b.noteFolders.replacingOrAdding(entry) { it.id == id })
+    }
+
+    /**
+     * Renames the record and every member note in one mutation — a half-applied
+     * rename would silently unfile (and unlock) the notes. An id of 0 materialises
+     * an implicit folder that existed only as strings on its notes.
+     */
+    fun renameFolder(folder: FolderEntity, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) return
+        val oldKey = folderKey(folder.name) ?: return
+        mutate { b ->
+            val id = if (folder.id == 0) nextId(b.noteFolders) { it.id } else folder.id
+            val entry = folder.copy(id = id, name = trimmed, timestamp = folder.timestamp.orNow())
+            b.copy(
+                noteFolders = b.noteFolders.replacingOrAdding(entry) { it.id == id },
+                prophecies = b.prophecies.map {
+                    if (folderKey(it.folder) == oldKey) it.copy(folder = trimmed) else it
+                }
+            )
+        }
+        // The unlock travels with the rename, or the folder you are inside re-seals
+        // under your feet.
+        if (oldKey in unlockedFolders) markFolderUnlocked(trimmed)
+    }
+
+    /** Deletes the folder record; its notes go loose, they are not deleted. */
+    fun deleteFolder(folder: FolderEntity) {
+        val key = folderKey(folder.name)
+        mutate { b ->
+            b.copy(
+                noteFolders = b.noteFolders.filterNot { it.id == folder.id },
+                prophecies = b.prophecies.map {
+                    if (folderKey(it.folder) == key) it.copy(folder = null) else it
+                }
+            )
+        }
+    }
+
+    /**
+     * Locks or unlocks a folder, creating the record if it only existed implicitly.
+     * [passcode] non-blank sets a fresh passcode; null keeps whatever is already
+     * set; unlocking always clears it.
+     */
+    fun setFolderLock(folder: FolderEntity, locked: Boolean, passcode: String?) {
+        val updated = when {
+            !locked -> folder.copy(isLocked = false, passcodeHash = null, passcodeSalt = null)
+            passcode.isNullOrEmpty() -> folder.copy(isLocked = true)
+            else -> {
+                val salt = newFolderSalt()
+                folder.copy(
+                    isLocked = true,
+                    passcodeSalt = salt,
+                    passcodeHash = hashFolderPasscode(salt, passcode)
+                )
+            }
+        }
+        saveFolder(updated)
+        if (!locked) markFolderUnlocked(folder.name)
+    }
+
+    /**
+     * The recovery path for a forgotten folder passcode: proving the vault master
+     * password proves ownership. Argon2id takes about a second — callers run this
+     * off the main thread like [unlock].
+     */
+    fun verifyMasterPassword(password: CharArray): Boolean = runCatching {
+        store.unlock(password).lock()
+        true
+    }.getOrDefault(false)
+
+    // ── Bulk note actions ─────────────────────────────────────────────────────
+
+    /** [folderName] null unfiles; a name snaps onto an existing folder's spelling. */
+    fun moveNotesToFolder(ids: Collection<Int>, folderName: String?) {
+        if (ids.isEmpty()) return
+        mutate { b ->
+            val target = folderName?.trim()?.takeIf { it.isNotEmpty() }?.let { name ->
+                val key = folderKey(name)
+                b.noteFolders.firstOrNull { folderKey(it.name) == key }?.name ?: name
+            }
+            b.copy(prophecies = b.prophecies.map {
+                if (it.id in ids) it.copy(folder = target) else it
+            })
+        }
+    }
+
+    fun archiveNotes(ids: Collection<Int>, archived: Boolean) {
+        if (ids.isEmpty()) return
+        mutate { b ->
+            b.copy(prophecies = b.prophecies.map {
+                if (it.id in ids) it.copy(isArchived = archived, isPinned = if (archived) false else it.isPinned)
+                else it
+            })
+        }
+    }
+
+    fun pinNotes(ids: Collection<Int>, pinned: Boolean) {
+        if (ids.isEmpty()) return
+        mutate { b ->
+            b.copy(prophecies = b.prophecies.map {
+                if (it.id in ids && !it.isArchived) it.copy(isPinned = pinned) else it
+            })
+        }
+    }
+
+    fun deleteNotes(ids: Collection<Int>) {
+        if (ids.isEmpty()) return
+        mutate { b -> b.copy(prophecies = b.prophecies.filterNot { it.id in ids }) }
     }
 
     fun toggleNotePinned(note: ProphecyEntity) = patchProphecy(note.copy(isPinned = !note.isPinned))

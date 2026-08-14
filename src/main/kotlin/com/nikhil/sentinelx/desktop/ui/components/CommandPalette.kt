@@ -24,6 +24,8 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
 import com.nikhil.sentinelx.desktop.core.format.businessDateOf
+import com.nikhil.sentinelx.desktop.core.format.displayGlyph
+import com.nikhil.sentinelx.desktop.core.format.folderKey
 import com.nikhil.sentinelx.desktop.core.format.folderName
 import com.nikhil.sentinelx.desktop.core.format.isIn
 import com.nikhil.sentinelx.desktop.ui.Section
@@ -50,15 +52,31 @@ data class PaletteEntry(
  * The point is that one keystroke searches *everything* — a login, a card number, a
  * note, a document, a transaction — without first choosing a category. On a phone
  * you must navigate to the right screen before you can search it at all.
+ *
+ * [sealedFolders] are the locked folders not yet opened this session, as [folderKey]s.
+ * Their notes are left out entirely — title included: hiding the contents while
+ * indexing the names would leak exactly what the seal exists to hide. The folder
+ * itself is still findable, marked sealed.
  */
-fun buildIndex(backup: MasterBackup): List<PaletteEntry> = buildList {
+fun buildIndex(backup: MasterBackup, sealedFolders: Set<String> = emptySet()): List<PaletteEntry> = buildList {
     backup.logins.forEach {
         add(PaletteEntry(it.siteName, it.username, Section.LOGINS, "ᛗ", accentFor(it.siteName), it.password, "password"))
     }
     backup.artifacts.forEach {
         add(PaletteEntry(it.label1.ifBlank { it.type }, "${it.type} · ${it.label2}", Section.CARDS, "ᚠ", GoldTarnished, it.label2, "number"))
     }
+    backup.noteFolders.forEach { folder ->
+        val sealed = folderKey(folder.name) in sealedFolders
+        add(
+            PaletteEntry(
+                folder.name,
+                if (sealed) "Sealed tome" else "Note folder",
+                Section.NOTES, folder.displayGlyph(), PurpleMystic
+            )
+        )
+    }
     backup.prophecies.forEach {
+        if (folderKey(it.folder) in sealedFolders) return@forEach
         // A locked note's body stays out of the index — the palette echoes subtitles
         // straight onto the screen, which is exactly what the lock exists to prevent.
         val preview = when {

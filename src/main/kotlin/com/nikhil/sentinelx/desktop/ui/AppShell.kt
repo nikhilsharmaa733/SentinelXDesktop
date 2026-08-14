@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.SxvArchive
+import com.nikhil.sentinelx.desktop.core.format.folderKey
 import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.ui.components.*
@@ -108,7 +109,16 @@ fun AppShell(state: AppState) {
     }
 
     if (paletteOpen) {
-        val index = remember(state.backup) { buildIndex(state.backup) }
+        // Sealed folders' notes stay out of the index entirely; unsealing one
+        // (state.unlockedFolders) folds them back in.
+        val index = remember(state.backup, state.unlockedFolders) {
+            val sealed = state.backup.noteFolders
+                .filter { it.isLocked }
+                .mapNotNull { folderKey(it.name) }
+                .filterNot { it in state.unlockedFolders }
+                .toSet()
+            buildIndex(state.backup, sealed)
+        }
         CommandPalette(
             index = index,
             onDismiss = { paletteOpen = false },

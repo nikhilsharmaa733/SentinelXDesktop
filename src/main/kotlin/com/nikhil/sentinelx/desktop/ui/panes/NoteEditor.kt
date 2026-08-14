@@ -27,12 +27,17 @@ import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
 @Composable
-fun NoteEditor(state: AppState, existing: ProphecyEntity?, onClose: () -> Unit) {
+fun NoteEditor(
+    state: AppState,
+    existing: ProphecyEntity?,
+    prefillFolder: String? = null,
+    onClose: () -> Unit
+) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
     var content by remember { mutableStateOf(existing?.content ?: "") }
     var sigil by remember { mutableStateOf(existing?.sigil ?: "GENERAL") }
     var colorHex by remember { mutableStateOf(existing?.colorHex) }
-    var folderText by remember { mutableStateOf(existing?.folderName() ?: "") }
+    var folderText by remember { mutableStateOf(existing?.folderName() ?: prefillFolder ?: "") }
     var isPinned by remember { mutableStateOf(existing?.isPinned ?: false) }
     var isLockedNote by remember { mutableStateOf(existing?.isLocked ?: false) }
     var isArchived by remember { mutableStateOf(existing?.isArchived ?: false) }
@@ -280,9 +285,12 @@ fun NoteEditor(state: AppState, existing: ProphecyEntity?, onClose: () -> Unit) 
         // ── Folder ───────────────────────────────────────────────────────────
         EditorField(folderText, { folderText = it }, "Folder", placeholder = "No folder")
         // Existing folders as one-tap chips — picking beats spelling, and a typo
-        // here would quietly start a second folder.
-        val knownFolders = remember(state.backup.prophecies) {
-            state.backup.prophecies.mapNotNull { it.folderName() }.distinct()
+        // here would quietly start a second folder. Records come first so an empty
+        // (note-less) folder is still offered.
+        val knownFolders = remember(state.backup.prophecies, state.backup.noteFolders) {
+            (state.backup.noteFolders.map { it.name } +
+                state.backup.prophecies.mapNotNull { it.folderName() })
+                .distinctBy { it.lowercase() }
                 .sortedWith(String.CASE_INSENSITIVE_ORDER)
         }
         val folderSuggestions = remember(folderText, knownFolders) {

@@ -71,7 +71,11 @@ sealed interface PanelRequest {
         override val identity get() = existing?.let { "card:${it.id}" }
     }
 
-    data class Note(val existing: ProphecyEntity?) : PanelRequest {
+    data class Note(
+        val existing: ProphecyEntity?,
+        /** Folder a brand-new note starts filed in — set when "+" is pressed inside one. */
+        val prefillFolder: String? = null
+    ) : PanelRequest {
         override val identity get() = existing?.let { "note:${it.id}" }
     }
 
@@ -268,7 +272,7 @@ private fun PanelContent(state: AppState, panel: Panel, onClose: () -> Unit) {
             ArtifactEditor(state, request.existing, onClose)
 
         is PanelRequest.Note ->
-            NoteEditor(state, request.existing, onClose)
+            NoteEditor(state, request.existing, request.prefillFolder, onClose)
 
         is PanelRequest.Chronicle ->
             ChronicleEditor(state, request.existing, onClose)

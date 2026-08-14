@@ -35,6 +35,13 @@ data class MasterBackup(
     /** Daily cash handover / balance sheet. Added in v7; absent from v6 archives. */
     val cashBook: List<CashEntryEntity> = emptyList(),
     /**
+     * Note folders — colour, glyph, lock, passcode gate. Travels with the NOTES
+     * section (a folder without its notes is a label; its notes without the folder
+     * lose their lock). Absent from pre-v9 archives, in which case folders exist only
+     * implicitly through the `folder` strings on the notes themselves, unlocked.
+     */
+    val noteFolders: List<FolderEntity> = emptyList(),
+    /**
      * Which sections this archive claims to carry, as [VaultSection] constants.
      *
      * Null means "the whole vault" — that is what every archive written before v8 is,
@@ -88,7 +95,9 @@ fun MasterBackup.carriedSections(): List<String> =
 fun MasterBackup.countIn(section: String): Int = when (section) {
     VaultSection.LOGINS -> logins.size
     VaultSection.CARDS -> artifacts.size
-    VaultSection.NOTES -> prophecies.size
+    // Folders count with their notes, the way accounts count with their ledger rows:
+    // one section, arriving together.
+    VaultSection.NOTES -> prophecies.size + noteFolders.size
     VaultSection.CHRONICLES -> chronicles.size
     VaultSection.LEDGER -> ledger.size + accounts.size
     VaultSection.CASHBOOK -> cashBook.size
@@ -109,6 +118,7 @@ fun MasterBackup.scopedTo(wanted: Collection<String>): MasterBackup {
         ledger = if (VaultSection.LEDGER in keep) ledger else emptyList(),
         accounts = if (VaultSection.LEDGER in keep) accounts else emptyList(),
         cashBook = if (VaultSection.CASHBOOK in keep) cashBook else emptyList(),
+        noteFolders = if (VaultSection.NOTES in keep) noteFolders else emptyList(),
         sections = if (keep.containsAll(VaultSection.ALL)) null
         else VaultSection.ALL.filter { it in keep },
         timestamp = System.currentTimeMillis()
@@ -259,6 +269,89 @@ fun MasterBackup.referencedImages(): Set<String> = buildSet {
     }
     ledger.forEach { addAll(it.billFilenames()) }
     cashBook.forEach { addAll(it.slipFilenames()) }
+}
+
+/**
+ * One note folder — a real container, not a filter tag. Mirrors the phone's
+ * `FolderEntity` with the Room annotations dropped.
+ *
+ * **The join to notes is the folder's `name`, not its id** — ids are per-device
+ * autoincrements Room reassigns on restore, while the name is already the folder's
+ * merge identity (the same reason ledger rows follow their account by name). Renaming
+ * a folder therefore MUST rename every member note's `folder` field in the same
+ * operation; `AppState.renameFolder` is the only place that does it correctly here.
+ *
+ * ## What the lock actually is
+ *
+ * A **privacy gate over the screen, not encryption over the bytes** — the vault is
+ * already sealed, and a folder's notes travel in the same archive JSON as everything
+ * else. What it buys is that an unlocked, handed-over machine shows nothing of the
+ * folder's contents: not in the list, not in search, not in the command palette.
+ *
+ * - `isLocked` with no passcode → owner check: a biometric prompt on the phone, a
+ *   plain reveal-curtain here (the vault password already proved ownership).
+ * - `isLocked` + passcode → both apps demand the passcode. The phone's biometric
+ *   still opens it, and here the vault master password is the recovery path — a lost
+ *   passcode never loses notes on either device.
+ */
+data class FolderEntity(
+    val id: Int = 0,
+    val name: String = "",
+    /** `#RRGGBB`, same palette as note colours. Null = default gold. */
+    val colorHex: String? = null,
+    /** One rune from [NoteFolders.GLYPHS]. Null = the default folder rune. */
+    val glyph: String? = null,
+    val isLocked: Boolean = false,
+    /** Hex SHA-256 of "salt:passcode". Null = no passcode set (owner-check lock only). */
+    val passcodeHash: String? = null,
+    val passcodeSalt: String? = null,
+    val timestamp: Long = 0L
+)
+
+object NoteFolders {
+    /** Runes a folder can wear. First one is the default. */
+    val GLYPHS = listOf("ᛝ", "ᚨ", "ᛟ", "ᛞ", "ᚷ", "ᛒ")
+    const val DEFAULT_GLYPH = "ᛝ"
+    const val MIN_PASSCODE = 4
+}
+
+fun FolderEntity.displayGlyph(): String = glyph?.takeIf { it.isNotBlank() } ?: NoteFolders.DEFAULT_GLYPH
+
+fun FolderEntity.hasPasscode(): Boolean = !passcodeHash.isNullOrBlank() && !passcodeSalt.isNullOrBlank()
+
+/**
+ * Folder names compare case-insensitively everywhere — "Work" and "work" are one
+ * folder — matching `VaultMerge.norm()`. The stored spelling is whatever the folder
+ * record (or first note) used; save paths snap notes onto that spelling.
+ */
+fun folderKey(name: String?): String? = name?.trim()?.takeIf { it.isNotEmpty() }?.lowercase()
+
+// Passcode gate. Deliberately a single salted SHA-256, not a KDF: this hash gates the
+// UI of an already-encrypted vault. An attacker who can read the hash is holding the
+// decrypted vault and can read the notes next to it — slowing them down here protects
+// nothing, while a KDF would add a cross-app parameter to keep in sync.
+
+fun newFolderSalt(): String {
+    val bytes = ByteArray(16)
+    java.security.SecureRandom().nextBytes(bytes)
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
+fun hashFolderPasscode(salt: String, passcode: String): String =
+    java.security.MessageDigest.getInstance("SHA-256")
+        .digest("$salt:$passcode".toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
+/** Constant-shape check; never throws. False when no passcode is set. */
+fun FolderEntity.verifyPasscode(passcode: String): Boolean {
+    val salt = passcodeSalt ?: return false
+    val expected = passcodeHash ?: return false
+    return runCatching {
+        java.security.MessageDigest.isEqual(
+            hashFolderPasscode(salt, passcode).toByteArray(Charsets.US_ASCII),
+            expected.lowercase().toByteArray(Charsets.US_ASCII)
+        )
+    }.getOrDefault(false)
 }
 
 // ── Notes ────────────────────────────────────────────────────────────────────

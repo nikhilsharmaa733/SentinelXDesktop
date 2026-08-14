@@ -140,16 +140,25 @@ Output is counts and integrity checks only — no field values — so it is safe
 - ✅ **Login site suggestions** — the login editor offers the sites already in the vault
   as you type, matching the phone's `AddLoginScreen`.
 - ✅ **Notes upgrade** (`ui/panes/NotesPane.kt`, `ui/panes/NoteEditor.kt`) — text
-  **and checklist** notes, folders (chips built from the notes themselves, the `book`
-  pattern), pin, archive, per-note colour, per-note lock (curtain + REVEAL here; a
-  biometric gate on the phone), live search across title/body/steps/folder, sort by
-  recent/title/sigil, tappable checkboxes in the reader. `ProphecyEntity` gained seven
-  nullable-or-defaulted fields — the archive stayed **v8**, old builds simply drop them.
+  **and checklist** notes, pin, archive, per-note colour, per-note lock (curtain +
+  REVEAL here; a biometric gate on the phone), live search across
+  title/body/steps/folder, sort by recent/title/sigil, tappable checkboxes in the
+  reader. `ProphecyEntity` gained seven nullable-or-defaulted fields — the archive
+  stayed **v8**, old builds simply drop them.
+- ✅ **Real note folders** — the rail shows folders + pinned + loose notes; a folder's
+  notes appear when opened. Folders are `FolderEntity` records (name = merge
+  identity, note→folder join is the *name*), can be **sealed** — passcode enforced on
+  both apps, with the vault master password as this side's recovery
+  (`AppState.verifyMasterPassword`) and the phone's fingerprint as the other's — and
+  notes move in bulk via SELECT mode. Sealed folders vanish from search and the
+  command palette (titles included) until unsealed; unlocks are per-session and die
+  with `lock()`. `MasterBackup` gained `noteFolders`; `VaultMerge.mergeNotes` couples
+  folders and notes the way `mergeLedger` couples accounts and rows.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
 
-115 tests passing.
+122 tests passing.
 
 ## Releasing
 
@@ -284,6 +293,19 @@ Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the p
   there, `NotesPane.kt` here). The stored value is the hex string, so a foreign colour
   still renders — but keep the palettes identical or the same note offers different
   swatches on each app.
+- **Folder renames cascade or corrupt.** The note→folder join is the folder *name*
+  (case-insensitive via `folderKey`); `AppState.renameFolder` rewrites the record and
+  every member note in one mutation. Any new code path that changes a folder's name
+  another way silently unfiles — and unlocks — its notes. Same on the phone.
+- **`setFolderLock(passcode = null)` KEEPS the existing passcode**; only unlocking
+  clears it. The lock dialog's "leave blank to keep" flow depends on this.
+- **Folder passcode hashing must stay byte-identical on both apps** — salted
+  SHA-256 of `"salt:passcode"`, hex output. It is deliberately not a KDF (the hash
+  gates the UI of an already-encrypted vault; the entity doc explains). A drift here
+  means a folder sealed on one device never opens on the other.
+- **Sealed folders must vanish from every listing surface** — rail, search, command
+  palette (titles too: `buildIndex(backup, sealedFolders)` in `AppShell`). Adding a
+  new surface that lists notes means honouring `unlockedFolders` there as well.
 - **`entryDate` is UTC midnight, not local midnight.** A cash book's date is a calendar
   day, not an instant. Use `businessDateOf()`; formatting it in the local zone shows the
   previous day west of Greenwich.

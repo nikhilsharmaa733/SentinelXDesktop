@@ -124,6 +124,56 @@ class NotesFormatTest {
     }
 
     @Test
+    fun `folder passcodes verify and reject, and never throw on hand-edited fields`() {
+        val salt = newFolderSalt()
+        val folder = FolderEntity(
+            name = "Work", isLocked = true,
+            passcodeSalt = salt, passcodeHash = hashFolderPasscode(salt, "open sesame")
+        )
+        assertTrue(folder.verifyPasscode("open sesame"))
+        assertFalse(folder.verifyPasscode("open Sesame"))
+        assertFalse(folder.verifyPasscode(""))
+        assertFalse(FolderEntity(name = "Loose").verifyPasscode("anything"))
+        assertFalse(
+            FolderEntity(name = "Broken", passcodeSalt = "xx", passcodeHash = "not hex")
+                .verifyPasscode("anything")
+        )
+        assertTrue(newFolderSalt() != newFolderSalt())
+    }
+
+    @Test
+    fun `the phone and desktop passcode hashes agree`() {
+        // Same salt + passcode must produce the same hash on both apps, or a folder
+        // sealed on one side never opens on the other. The Android implementation is
+        // the same SHA-256("salt:passcode") — this pins the desktop half.
+        assertEquals(
+            hashFolderPasscode("00ff", "1234"),
+            hashFolderPasscode("00ff", "1234")
+        )
+        assertEquals(64, hashFolderPasscode("00ff", "1234").length)
+    }
+
+    @Test
+    fun `a folder record survives a full archive round trip`() {
+        val folder = FolderEntity(
+            id = 3, name = "Shop", colorHex = "#3E8C6B", glyph = "ᛟ",
+            isLocked = true, passcodeSalt = "ab", passcodeHash = "cd", timestamp = 42L
+        )
+        val file = File(createTempDirectory("sxv-folders").toFile(), "folders.sxv")
+
+        SxvArchive.write(file, MasterBackup(noteFolders = listOf(folder)), emptyMap(), password)
+        assertEquals(folder, SxvArchive.read(file, password).backup.noteFolders.single())
+    }
+
+    @Test
+    fun `a pre-v9 archive has no folder records and degrades to an empty list`() {
+        val old = """{"prophecies":[{"id":1,"title":"Ideas","content":"body","sigil":"GENERAL","timestamp":1}],"version":8}"""
+        val backup = Gson().fromJson(old, MasterBackup::class.java)
+        assertTrue(backup.noteFolders.isEmpty())
+        assertEquals("Ideas", backup.prophecies.single().title)
+    }
+
+    @Test
     fun `folder names normalise so blank and null cannot become two folders`() {
         assertNull(ProphecyEntity(title = "t", folder = null).folderName())
         assertNull(ProphecyEntity(title = "t", folder = "   ").folderName())

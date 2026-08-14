@@ -190,6 +190,35 @@ class VaultMergeTest {
     }
 
     @Test
+    fun `a note differing only in pin, colour or checklist is a conflict, not identical`() {
+        // The fingerprint has to see the v8 fields, or a pin toggled on one device
+        // would be classified "already present, field for field" and silently dropped
+        // by the merge.
+        val vault = MasterBackup(prophecies = listOf(note("Ideas", "body")))
+        val archive = MasterBackup(
+            prophecies = listOf(note("Ideas", "body").copy(isPinned = true, colorHex = "#B0413E"))
+        )
+
+        val plan = VaultMerge.preview(vault, archive)
+        assertEquals(0, plan.identical)
+        assertEquals(1, plan.conflicting)
+
+        val overwritten = VaultMerge.merge(vault, archive, DuplicatePolicy.OVERWRITE).vault
+        assertTrue(overwritten.prophecies.single().isPinned)
+    }
+
+    @Test
+    fun `an absent note type and an explicit TEXT fingerprint identically`() {
+        // Gson gives `type` "TEXT" here (the all-defaults no-arg constructor) and null
+        // on Android for the same pre-v8 archive; noteType() folds both to TEXT so the
+        // two apps classify the record the same way.
+        val vault = MasterBackup(prophecies = listOf(note("Ideas").copy(type = null)))
+        val archive = MasterBackup(prophecies = listOf(note("Ideas").copy(type = Notes.TYPE_TEXT)))
+
+        assertEquals(1, VaultMerge.preview(vault, archive).identical)
+    }
+
+    @Test
     fun `two identical cash entries against one held yields one identical and one fresh`() {
         // cash_book carries no unique index on purpose: two identical handovers in a
         // day are legitimate. Counting free counterparts, rather than asking whether

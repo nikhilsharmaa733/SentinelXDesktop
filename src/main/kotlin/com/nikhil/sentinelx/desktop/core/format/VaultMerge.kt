@@ -206,7 +206,16 @@ object VaultMerge {
             reconcile(
                 VaultSection.NOTES, current.prophecies, incoming.prophecies, policy,
                 identity = { norm(it.title) },
-                fingerprint = { join(it.title, it.content, it.sigil) },
+                // noteType() rather than the raw field: the two apps' Gson defaults
+                // differ for an absent `type` (null here, "TEXT" on the JVM's no-arg
+                // constructor), and the normalised accessor keeps the same archive
+                // classifying identically on both.
+                fingerprint = {
+                    join(
+                        it.title, it.content, it.sigil, it.noteType(), it.isPinned,
+                        it.isArchived, it.isLocked, it.colorHex, it.checkItems, it.folder
+                    )
+                },
                 rename = { note, n -> note.copy(title = mark(note.title, n)) }
             ).also { stats += it.stats }.merged
         } else current.prophecies

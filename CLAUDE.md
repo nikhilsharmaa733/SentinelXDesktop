@@ -139,11 +139,17 @@ Output is counts and integrity checks only — no field values — so it is safe
   deliberately not persisted; reopening restores the editor's own default size.
 - ✅ **Login site suggestions** — the login editor offers the sites already in the vault
   as you type, matching the phone's `AddLoginScreen`.
+- ✅ **Notes upgrade** (`ui/panes/NotesPane.kt`, `ui/panes/NoteEditor.kt`) — text
+  **and checklist** notes, folders (chips built from the notes themselves, the `book`
+  pattern), pin, archive, per-note colour, per-note lock (curtain + REVEAL here; a
+  biometric gate on the phone), live search across title/body/steps/folder, sort by
+  recent/title/sigil, tappable checkboxes in the reader. `ProphecyEntity` gained seven
+  nullable-or-defaulted fields — the archive stayed **v8**, old builds simply drop them.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
 
-105 tests passing.
+115 tests passing.
 
 ## Releasing
 
@@ -259,6 +265,25 @@ Pushing needs the user's GitHub PAT (`repo` scope; add `workflow` scope if the p
 - **Cash entries: `amount` is authoritative, `denominations` is commentary.** Every total
   and export reads `amount` and never parses the JSON breakdown, so a corrupt breakdown
   costs the note detail and nothing else. `decodeDenominations` must never throw.
+- **Notes: `checkItems` is authoritative, `content` is its plain-text mirror.** Every
+  save and every checkbox tick regenerates `content` via `itemsToText()` — it is what
+  search, copy and pre-v8 builds read. `decodeCheckItems` never throws (empty list on
+  garbage). Never write one field without the other; `AppState.setNoteChecklist` is the
+  one place that does it right.
+- **Note toggles go through `patchProphecy`, not `upsertProphecy`.** Upsert stamps
+  `timestamp = now`; a pin, archive flip or checkbox tick must not shove the note to the
+  top of "recent". The phone draws the same line with `@Update`.
+- **Merge fingerprints for notes call `noteType()`, never the raw `type` field.** Gson
+  fills an absent `type` with `"TEXT"` here (all-defaults data classes get a real no-arg
+  constructor) but with null on Android — the normalised accessor is what keeps the same
+  archive classifying identically on both apps. Tested in both repos' `VaultMergeTest`.
+- **Locked notes must never leak their body** — not in the list row, not in the command
+  palette subtitle, not in the reader until REVEAL. The palette is the easy one to
+  forget: it echoes subtitles straight onto the screen.
+- **`noteColorChoices` is mirrored hex-for-hex with the phone** (`SentinelComponents.kt`
+  there, `NotesPane.kt` here). The stored value is the hex string, so a foreign colour
+  still renders — but keep the palettes identical or the same note offers different
+  swatches on each app.
 - **`entryDate` is UTC midnight, not local midnight.** A cash book's date is a calendar
   day, not an instant. Use `businessDateOf()`; formatting it in the local zone shows the
   previous day west of Greenwich.

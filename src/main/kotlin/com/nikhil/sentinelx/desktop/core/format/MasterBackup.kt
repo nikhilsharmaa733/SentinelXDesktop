@@ -1,5 +1,7 @@
 package com.nikhil.sentinelx.desktop.core.format
 
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.time.Instant
 import java.time.LocalDate
@@ -146,12 +148,36 @@ data class ChronicleEntity(
     val timestamp: Long = 0L
 )
 
+/**
+ * One note — plain text or a checklist.
+ *
+ * The v8 fields are all nullable or defaulted primitives, so a pre-v8 archive
+ * degrades to safe defaults and a v8 archive read by an old build simply drops them.
+ * `title` is the note's identity (the phone's unique index and the merge key); the
+ * editor blocks duplicates before save for the same reason the phone does.
+ *
+ * For checklist notes, [checkItems] is authoritative and [content] is a plain-text
+ * mirror regenerated on every save ([itemsToText]) — it is what search, copy and
+ * pre-v8 builds read. Anything that mutates the checklist must rewrite both.
+ */
 data class ProphecyEntity(
     val id: Int = 0,
     val title: String = "",
     val content: String = "",
     val sigil: String = "GENERAL",
-    val timestamp: Long = 0L
+    val timestamp: Long = 0L,
+    /** [Notes.TYPE_TEXT] or [Notes.TYPE_CHECKLIST]. Read through [noteType], never raw. */
+    val type: String? = Notes.TYPE_TEXT,
+    val isPinned: Boolean = false,
+    val isArchived: Boolean = false,
+    /** On the phone this demands a biometric pass; here it hides the body until revealed. */
+    val isLocked: Boolean = false,
+    /** Per-note colour as `#RRGGBB`, independent of the sigil. Null = default surface. */
+    val colorHex: String? = null,
+    /** JSON array of checklist items, e.g. `[{"text":"Milk","done":false}]`. */
+    val checkItems: String? = null,
+    /** Free-text folder name. A filter tag, not a second table — the `book` pattern. */
+    val folder: String? = null
 )
 
 data class TransactionEntity(
@@ -234,6 +260,103 @@ fun MasterBackup.referencedImages(): Set<String> = buildSet {
     ledger.forEach { addAll(it.billFilenames()) }
     cashBook.forEach { addAll(it.slipFilenames()) }
 }
+
+// ── Notes ────────────────────────────────────────────────────────────────────
+
+/**
+ * The vocabulary of [ProphecyEntity]. Persisted strings that cross the `.sxv`
+ * boundary, so constants rather than enums — an unrecognised string from a newer
+ * build fails a comparison and falls through, where an enum would throw.
+ */
+object Notes {
+    const val TYPE_TEXT = "TEXT"
+    const val TYPE_CHECKLIST = "CHECKLIST"
+}
+
+/** One checklist entry. Never persisted directly — always through the codec below. */
+data class CheckItem(val text: String, val done: Boolean = false)
+
+/**
+ * Decodes the checklist. **Never throws** — a corrupt value yields an empty list,
+ * costing the checkbox structure while [ProphecyEntity.content] still shows the note
+ * as plain lines. Same contract as [decodeDenominations].
+ */
+fun decodeCheckItems(raw: String?): List<CheckItem> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching {
+        JsonParser.parseString(raw).asJsonArray.mapNotNull { element ->
+            runCatching {
+                val obj = element.asJsonObject
+                CheckItem(
+                    text = obj.get("text")?.asString ?: "",
+                    done = obj.get("done")?.asBoolean ?: false
+                )
+            }.getOrNull()
+        }
+    }.getOrDefault(emptyList())
+}
+
+/**
+ * Encodes a checklist, or null when it is empty. Built through Gson's tree writer so
+ * escaping is correct and the field order is fixed — the same list always produces
+ * the same string, which keeps saves and merges from churning on no-ops.
+ */
+fun List<CheckItem>.encodeCheckItems(): String? {
+    if (isEmpty()) return null
+    val array = JsonArray()
+    forEach { item ->
+        val obj = JsonObject()
+        obj.addProperty("text", item.text)
+        obj.addProperty("done", item.done)
+        array.add(obj)
+    }
+    return array.toString()
+}
+
+/**
+ * The note's type with the null/unknown fallback applied. Old records and pre-v8
+ * archives carry null here; both mean a plain text note. `VaultMerge` fingerprints
+ * call this rather than the raw field so the two apps — whose Gson defaults differ —
+ * classify the same record identically.
+ */
+fun ProphecyEntity.noteType(): String =
+    if (type == Notes.TYPE_CHECKLIST) Notes.TYPE_CHECKLIST else Notes.TYPE_TEXT
+
+fun ProphecyEntity.isChecklist(): Boolean = noteType() == Notes.TYPE_CHECKLIST
+
+fun ProphecyEntity.checklistItems(): List<CheckItem> = decodeCheckItems(checkItems)
+
+/** Fraction complete, 0 when the list is empty. */
+fun ProphecyEntity.checklistProgress(): Float {
+    val items = checklistItems()
+    if (items.isEmpty()) return 0f
+    return items.count { it.done }.toFloat() / items.size
+}
+
+/** The folder, normalised: null for blank so "" and null cannot become two folders. */
+fun ProphecyEntity.folderName(): String? = folder?.trim()?.takeIf { it.isNotEmpty() }
+
+/** Everything live search should look through — title, body and checklist lines. */
+fun ProphecyEntity.matchesQuery(query: String): Boolean {
+    if (query.isBlank()) return true
+    return title.contains(query, true) ||
+        content.contains(query, true) ||
+        (folderName()?.contains(query, true) ?: false) ||
+        checklistItems().any { it.text.contains(query, true) }
+}
+
+// Text ⇄ checklist conversion. Round-trip safe: a done item becomes a "✓ " line and
+// comes back done. This is also the plain-text mirror written into `content` for
+// checklist notes, so a pre-v8 build (or a corrupt checkItems) still shows the list.
+
+fun textToItems(text: String): List<CheckItem> =
+    text.lines().map { it.trim() }.filter { it.isNotEmpty() }.map { line ->
+        if (line.startsWith("✓ ")) CheckItem(line.removePrefix("✓ ").trim(), done = true)
+        else CheckItem(line, done = false)
+    }
+
+fun itemsToText(items: List<CheckItem>): String =
+    items.joinToString("\n") { if (it.done) "✓ ${it.text}" else it.text }
 
 // ── Cash book ────────────────────────────────────────────────────────────────
 

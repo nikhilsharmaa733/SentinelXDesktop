@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
 import com.nikhil.sentinelx.desktop.core.format.CashEntryEntity
+import com.nikhil.sentinelx.desktop.core.format.CheckItem
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
 import com.nikhil.sentinelx.desktop.core.format.LoginEntity
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
@@ -15,6 +16,8 @@ import com.nikhil.sentinelx.desktop.core.format.SxvArchive
 import com.nikhil.sentinelx.desktop.core.format.TransactionEntity
 import com.nikhil.sentinelx.desktop.core.format.VaultMerge
 import com.nikhil.sentinelx.desktop.core.format.VaultSection
+import com.nikhil.sentinelx.desktop.core.format.encodeCheckItems
+import com.nikhil.sentinelx.desktop.core.format.itemsToText
 import com.nikhil.sentinelx.desktop.core.format.referencedImages
 import com.nikhil.sentinelx.desktop.core.format.scopedTo
 import com.nikhil.sentinelx.desktop.core.store.LocalCrypto
@@ -205,6 +208,29 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     }
 
     fun deleteProphecy(id: Int) = mutate { b -> b.copy(prophecies = b.prophecies.filterNot { it.id == id }) }
+
+    /**
+     * In-place note change that is not an edit — pin, archive, a checkbox tick.
+     * Unlike [upsertProphecy] the timestamp stays put, matching the phone's @Update
+     * path, so pinning a note does not shove it to the top of "recent".
+     */
+    fun patchProphecy(note: ProphecyEntity) = mutate { b ->
+        b.copy(prophecies = b.prophecies.map { if (it.id == note.id) note else it })
+    }
+
+    fun toggleNotePinned(note: ProphecyEntity) = patchProphecy(note.copy(isPinned = !note.isPinned))
+
+    /** Archive is the recoverable "delete". An archived note also drops its pin. */
+    fun toggleNoteArchived(note: ProphecyEntity) =
+        patchProphecy(note.copy(isArchived = !note.isArchived, isPinned = false))
+
+    /**
+     * Rewrites a checklist after a checkbox tap. `content` is regenerated alongside
+     * `checkItems` — it is the plain-text mirror that search, copy and pre-v8 builds
+     * read, and the two must never disagree.
+     */
+    fun setNoteChecklist(note: ProphecyEntity, items: List<CheckItem>) =
+        patchProphecy(note.copy(checkItems = items.encodeCheckItems(), content = itemsToText(items)))
 
     fun upsertChronicle(doc: ChronicleEntity) = mutate { b ->
         val id = if (doc.id == 0) nextId(b.chronicles) { it.id } else doc.id

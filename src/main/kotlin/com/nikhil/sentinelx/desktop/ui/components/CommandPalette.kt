@@ -24,6 +24,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
 import com.nikhil.sentinelx.desktop.core.format.businessDateOf
+import com.nikhil.sentinelx.desktop.core.format.folderName
 import com.nikhil.sentinelx.desktop.core.format.isIn
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.requestWhenReady
@@ -58,7 +59,23 @@ fun buildIndex(backup: MasterBackup): List<PaletteEntry> = buildList {
         add(PaletteEntry(it.label1.ifBlank { it.type }, "${it.type} · ${it.label2}", Section.CARDS, "ᚠ", GoldTarnished, it.label2, "number"))
     }
     backup.prophecies.forEach {
-        add(PaletteEntry(it.title.ifBlank { "Untitled" }, it.content.replace('\n', ' ').take(60), Section.NOTES, "ᚱ", PurpleMystic))
+        // A locked note's body stays out of the index — the palette echoes subtitles
+        // straight onto the screen, which is exactly what the lock exists to prevent.
+        val preview = when {
+            it.isLocked -> "Sealed note"
+            else -> it.content.replace('\n', ' ').take(60)
+        }
+        val prefix = listOfNotNull(
+            it.folderName(),
+            "archived".takeIf { _ -> it.isArchived }
+        ).joinToString(" · ")
+        add(
+            PaletteEntry(
+                it.title.ifBlank { "Untitled" },
+                if (prefix.isEmpty()) preview else "$prefix · $preview",
+                Section.NOTES, "ᚱ", PurpleMystic
+            )
+        )
     }
     backup.chronicles.forEach {
         add(PaletteEntry(it.title.ifBlank { "Untitled" }, listOf(it.authority, it.year).filter { s -> s.isNotBlank() }.joinToString(" · "), Section.CHRONICLES, "ᛀ", GoldBright))

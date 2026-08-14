@@ -356,10 +356,15 @@ $inventory
         else -> "Other"
     }
 
-    /** Evening precedes morning within a date: cash comes home before it goes back. */
+    /**
+     * Evening precedes morning within a business date: the pair a date carries is
+     * "came home tonight, goes back tomorrow", which is also the order the day cards
+     * draw. The old ordering put MORNING first, so the running balance showed the
+     * money leaving before it had arrived and dipped negative through every pair.
+     */
     private fun CashEntryEntity.slotOrder(): Int = when (slot) {
-        CashBook.SLOT_MORNING -> 0
-        CashBook.SLOT_EVENING -> 1
+        CashBook.SLOT_EVENING -> 0
+        CashBook.SLOT_MORNING -> 1
         else -> 2
     }
 

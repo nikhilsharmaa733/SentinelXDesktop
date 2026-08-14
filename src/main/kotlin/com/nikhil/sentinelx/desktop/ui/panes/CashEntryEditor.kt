@@ -87,6 +87,8 @@ fun CashEntryEditor(
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var slips by remember { mutableStateOf(existing?.slipFilenames() ?: emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    /** Index of the slip being viewed full size, or null. */
+    var viewingSlip by remember { mutableStateOf<Int?>(null) }
 
     val parsedAmount = amount.replace(",", "").trim().toDoubleOrNull()
     val difference = if (counts.isEmpty() || parsedAmount == null) 0.0 else countedTotal - parsedAmount
@@ -283,13 +285,17 @@ fun CashEntryEditor(
         // ── Slip photo ───────────────────────────────────────────────────────
         FieldLabel("SLIP PHOTO")
         Row(verticalAlignment = Alignment.CenterVertically) {
-            slips.forEach { name ->
+            slips.forEachIndexed { index, name ->
                 Box(Modifier.padding(end = 8.dp)) {
-                    VaultImage(
-                        fileName = name,
-                        loader = state::readImage,
-                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(9.dp))
-                    )
+                    // Clicking opens it full size — you should be able to check the
+                    // slip is legible before saving, not after.
+                    Box(Modifier.clickable { viewingSlip = index }) {
+                        VaultImage(
+                            fileName = name,
+                            loader = state::readImage,
+                            modifier = Modifier.size(64.dp).clip(RoundedCornerShape(9.dp))
+                        )
+                    }
                     Box(
                         Modifier.align(Alignment.TopEnd).size(18.dp)
                             .clip(RoundedCornerShape(9.dp))
@@ -319,6 +325,10 @@ fun CashEntryEditor(
 
         Spacer(Modifier.height(16.dp))
         EditorField(notes, { notes = it }, "Notes", placeholder = "Anything unusual", singleLine = false, minLines = 2)
+    }
+
+    viewingSlip?.let { page ->
+        SlipViewerDialog(slips, state::readImage, initialIndex = page) { viewingSlip = null }
     }
 
     if (confirmDelete && existing != null) {

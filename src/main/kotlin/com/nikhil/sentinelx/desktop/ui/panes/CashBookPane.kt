@@ -97,7 +97,8 @@ fun CashBookPane(state: AppState) {
     }
 
     var exporting by remember { mutableStateOf(false) }
-    var viewingSlips by remember { mutableStateOf<List<String>?>(null) }
+    /** The slip filenames being viewed and which one was clicked. */
+    var viewingSlips by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
 
     val pending = scoped.count { !it.isVerified() }
     val mismatches = scoped.count { !it.isReconciled() }
@@ -196,7 +197,7 @@ fun CashBookPane(state: AppState) {
                                         state = state,
                                         onEdit = { state.panels.open(PanelRequest.CashEntry(it, it.entryDate, it.slot)) },
                                         onAdd = { seed -> state.openCashEntry(seed) },
-                                        onViewSlips = { viewingSlips = it }
+                                        onViewSlips = { names, page -> viewingSlips = names to page }
                                     )
                                 }
                                 item { Spacer(Modifier.height(20.dp)) }
@@ -219,8 +220,8 @@ fun CashBookPane(state: AppState) {
             title = month?.format(monthLabel)?.let { "Cash Book — $it" } ?: "Cash Book — all entries"
         ) { exporting = false }
     }
-    viewingSlips?.let { names ->
-        SlipViewer(state, names) { viewingSlips = null }
+    viewingSlips?.let { (names, page) ->
+        SlipViewerDialog(names, state::readImage, initialIndex = page) { viewingSlips = null }
     }
 }
 
@@ -389,7 +390,7 @@ private fun DayCard(
     state: AppState,
     onEdit: (CashEntryEntity) -> Unit,
     onAdd: (NewEntrySeed) -> Unit,
-    onViewSlips: (List<String>) -> Unit
+    onViewSlips: (List<String>, Int) -> Unit
 ) {
     val date = businessDateOf(day.date)
     val cells = remember(day) { dayCells(day) }
@@ -549,7 +550,7 @@ private fun HalfSlot(
     hint: String,
     state: AppState,
     onEdit: (CashEntryEntity) -> Unit,
-    onViewSlips: (List<String>) -> Unit
+    onViewSlips: (List<String>, Int) -> Unit
 ) {
     val accent = if (entry.isIn()) IncomeGreen else ExpenseRed
     val counts = entry.denominationCounts()
@@ -606,20 +607,45 @@ private fun HalfSlot(
                     fontSize = 9.sp
                 )
             }
-            if (slips.isNotEmpty()) {
-                Row(
-                    Modifier.clip(RoundedCornerShape(7.dp))
-                        .background(CyanGlow.copy(0.08f))
-                        .clickable { onViewSlips(slips) }
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("◈", color = CyanGlow, fontSize = 10.sp)
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        "${slips.size} slip${if (slips.size == 1) "" else "s"}",
-                        color = CyanGlow, fontSize = 9.sp, fontWeight = FontWeight.Bold
-                    )
+        }
+
+        // The slip photos themselves, not a chip counting them. The photograph is the
+        // evidence the ritual produces; a "1 slip" label under the names is how it went
+        // unseen. Click any to view it full size. Mirrors the phone's day card.
+        if (slips.isNotEmpty()) {
+            Spacer(Modifier.height(9.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                slips.take(3).forEachIndexed { index, name ->
+                    if (index > 0) Spacer(Modifier.width(7.dp))
+                    Box(
+                        Modifier.size(46.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, CyanGlow.copy(0.3f), RoundedCornerShape(8.dp))
+                            .clickable { onViewSlips(slips, index) }
+                    ) {
+                        VaultImage(
+                            fileName = name,
+                            loader = state::readImage,
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+                }
+                if (slips.size > 3) {
+                    Spacer(Modifier.width(7.dp))
+                    Box(
+                        Modifier.size(46.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(CyanGlow.copy(0.08f))
+                            .border(1.dp, CyanGlow.copy(0.3f), RoundedCornerShape(8.dp))
+                            .clickable { onViewSlips(slips, 3) },
+                        Alignment.Center
+                    ) {
+                        Text(
+                            "+${slips.size - 3}",
+                            color = CyanGlow, fontSize = 12.sp, fontWeight = FontWeight.Black
+                        )
+                    }
                 }
             }
         }
@@ -741,49 +767,5 @@ private fun NoteInventoryStrip(entries: List<CashEntryEntity>) {
     }
 }
 
-// ── Slip viewer ──────────────────────────────────────────────────────────────
-
-@Composable
-private fun SlipViewer(state: AppState, names: List<String>, onClose: () -> Unit) {
-    var index by remember { mutableStateOf(0) }
-    val safe = index.coerceIn(0, names.lastIndex)
-
-    AlertDialog(
-        onDismissRequest = onClose,
-        containerColor = BackgroundDeep,
-        shape = RoundedCornerShape(18.dp),
-        title = {
-            Text(
-                "SLIP ${safe + 1} OF ${names.size}",
-                color = GoldTarnished, fontSize = 13.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = 2.sp
-            )
-        },
-        text = {
-            Column(Modifier.width(560.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                VaultImage(
-                    fileName = names[safe],
-                    loader = state::readImage,
-                    modifier = Modifier.fillMaxWidth().height(460.dp).clip(RoundedCornerShape(12.dp))
-                )
-                if (names.size > 1) {
-                    Spacer(Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { index = (safe - 1 + names.size) % names.size }) {
-                            Text("◀ PREV", color = CyanGlow, fontSize = 11.sp)
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        TextButton(onClick = { index = (safe + 1) % names.size }) {
-                            Text("NEXT ▶", color = CyanGlow, fontSize = 11.sp)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onClose) {
-                Text("CLOSE", color = CyanGlow, fontWeight = FontWeight.Bold)
-            }
-        }
-    )
-}
+// SlipViewer moved to ui/components/SlipViewerDialog.kt — the entry editor needed it
+// too, and shared composables do not live in pane files.

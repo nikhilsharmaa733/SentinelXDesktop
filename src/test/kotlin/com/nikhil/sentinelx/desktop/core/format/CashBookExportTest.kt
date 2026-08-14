@@ -129,15 +129,18 @@ class CashBookExportTest {
 
     @Test
     fun `evening precedes morning within a day`() {
-        // Cash comes home before it goes back. Sorted by timestamp alone, a morning
-        // entry recorded first would put the balance negative halfway down the page.
+        // Cash comes home before it goes back — a business date's pair is "came home
+        // tonight, goes back tomorrow", the order the day cards draw. This test used
+        // to assert the opposite of its own name and pinned the bug it now guards
+        // against: with morning first, the running balance showed the money leaving
+        // before it had arrived and dipped negative through every pair.
         val sameDay = listOf(
             entry(1, 6, CashBook.OUT, 500.0, CashBook.SLOT_MORNING),
             entry(2, 6, CashBook.IN, 900.0, CashBook.SLOT_EVENING)
         )
         val lines = csvOf(sameDay)
-        assertTrue(lines[1].contains("MORNING"), "morning should come first:\n${lines[1]}")
-        assertTrue(lines[2].contains("EVENING"))
+        assertTrue(lines[1].contains("EVENING"), "evening should come first:\n${lines[1]}")
+        assertTrue(lines[2].contains("MORNING"))
     }
 
     @Test

@@ -79,8 +79,28 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
      */
     val panels = PanelHostState()
 
+    /**
+     * The browser bridge — the desktop counterpart of the phone's autofill
+     * service. It reads logins live from [backup] and routes a capture back
+     * through [upsertLogin], so it never holds its own copy of the vault. Its
+     * on/off preference persists in a sidecar (like favourites); the socket
+     * itself runs only between unlock and lock.
+     */
+    val bridge = BridgeController(
+        loginsProvider = { backup.logins },
+        onCaptureConfirmed = { upsertLogin(it) }
+    )
+
     val vaultExists: Boolean get() = store.exists
     val vaultLocation: String get() = VaultStore.defaultDir().path
+
+    /** Persist and apply the bridge toggle. */
+    fun setBridgeEnabled(value: Boolean) {
+        bridge.setEnabled(value, unlocked = !locked)
+        runCatching {
+            session?.writeSidecar("bridge", if (value) "on".toByteArray() else "off".toByteArray())
+        }
+    }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -91,9 +111,20 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     fun unlock(password: CharArray): Boolean = guard("Unlocking vault…") {
         session = store.unlock(password).also { backup = it.load() }
         loadFavourites()
+        loadBridgePreference()
         locked = false
+        bridge.onUnlocked()
         true
     } ?: false
+
+    private fun loadBridgePreference() {
+        val on = runCatching {
+            session?.readSidecar("bridge")?.toString(Charsets.UTF_8)?.trim() == "on"
+        }.getOrDefault(false)
+        // Reflect the stored preference without touching the socket yet — unlock()
+        // starts it right after via bridge.onUnlocked(), so avoid a double start.
+        if (on != bridge.enabled) bridge.setEnabled(on, unlocked = false)
+    }
 
     fun create(password: CharArray, seed: MasterBackup = MasterBackup()): Boolean =
         guard("Creating vault…") {
@@ -104,6 +135,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         } ?: false
 
     fun lock() {
+        bridge.onLocked()
         session?.lock()
         session = null
         backup = MasterBackup()

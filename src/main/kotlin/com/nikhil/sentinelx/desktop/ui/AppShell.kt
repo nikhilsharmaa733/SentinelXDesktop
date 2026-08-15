@@ -7,6 +7,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -402,6 +403,10 @@ private fun OverviewPane(state: AppState) {
             }
         }
 
+        // ── Browser bridge ───────────────────────────────────────────────────
+        Spacer(Modifier.height(14.dp))
+        BrowserBridgeCard(state)
+
         if (b.logins.isEmpty() && b.artifacts.isEmpty() && b.prophecies.isEmpty()) {
             Spacer(Modifier.height(20.dp))
             Text(
@@ -432,6 +437,140 @@ private fun StatTile(label: String, count: Int, accent: Color, modifier: Modifie
         Spacer(Modifier.height(2.dp))
         Text(label.uppercase(), color = TextMuted, fontSize = 9.sp, letterSpacing = 2.sp)
     }
+}
+
+/**
+ * Overview's control panel for the browser bridge — the desktop equivalent of
+ * the phone's "ENABLE AUTOFILL" tile. Turning it on starts the local socket;
+ * "Install browser link" lays down the native-messaging host + per-browser
+ * manifests and reveals where to load the unpacked extension. Everything here
+ * is local — the card says so, because a browser extension that fills passwords
+ * is exactly the kind of thing a user should be able to reason about.
+ */
+@Composable
+private fun BrowserBridgeCard(state: AppState) {
+    val bridge = state.bridge
+    var installReport by remember { mutableStateOf<com.nikhil.sentinelx.desktop.core.bridge.BridgeInstaller.Report?>(null) }
+    var installedAlready by remember { mutableStateOf(com.nikhil.sentinelx.desktop.core.bridge.BridgeInstaller.isInstalled()) }
+
+    val accent = if (bridge.running) IncomeGreen else CyanGlow
+    GemCard(accent = accent, modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "BROWSER BRIDGE",
+                color = accent, fontSize = 10.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.weight(1f))
+            // The on/off switch — a pill that fills when running.
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(if (bridge.enabled) IncomeGreen.copy(0.16f) else SurfaceElevated)
+                    .border(1.dp, if (bridge.enabled) IncomeGreen.copy(0.5f) else GoldDark.copy(0.2f), RoundedCornerShape(20.dp))
+                    .clickable { state.setBridgeEnabled(!bridge.enabled) }
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(8.dp).clip(RoundedCornerShape(4.dp))
+                        .background(if (bridge.running) IncomeGreen else TextMuted)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (bridge.enabled) (if (bridge.running) "ON" else "ON (locked)") else "OFF",
+                    color = if (bridge.enabled) IncomeGreen else TextSubtle,
+                    fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Fill sealed logins into your browser and capture new ones back. Runs only " +
+                "while the vault is open, over a local socket — never a network port. Every " +
+                "fill asks for your approval here first.",
+            color = TextSubtle, fontSize = 12.sp, lineHeight = 17.sp
+        )
+
+        Spacer(Modifier.height(14.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SmallActionButton(
+                if (installedAlready) "Re-install browser link" else "Install browser link",
+                CyanGlow
+            ) {
+                installReport = com.nikhil.sentinelx.desktop.core.bridge.BridgeInstaller.install()
+                installedAlready = true
+            }
+            Spacer(Modifier.width(10.dp))
+            // Optional hardening: master password at each fill, not just a click.
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .clickable { bridge.requireMasterConfirm = !bridge.requireMasterConfirm }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(15.dp).clip(RoundedCornerShape(4.dp))
+                        .background(if (bridge.requireMasterConfirm) CyanGlow else SurfaceElevated)
+                        .border(1.dp, if (bridge.requireMasterConfirm) CyanGlow else GoldDark.copy(0.3f), RoundedCornerShape(4.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (bridge.requireMasterConfirm) Text("✓", color = BackgroundDeep, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.width(7.dp))
+                Text("Require master password per fill", color = TextSubtle, fontSize = 11.sp)
+            }
+        }
+
+        installReport?.let { report ->
+            Spacer(Modifier.height(14.dp))
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SurfaceStone)
+                    .border(1.dp, GoldDark.copy(0.2f), RoundedCornerShape(12.dp))
+                    .padding(14.dp)
+            ) {
+                Text(
+                    if (report.installed.isEmpty()) "No supported browser found."
+                    else "Linked: ${report.installed.joinToString(", ")}",
+                    color = if (report.installed.isEmpty()) AmberWarn else IncomeGreen,
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("Now load the extension in your browser:", color = TextSubtle, fontSize = 11.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Chrome / Brave / Edge: open the Extensions page, turn on Developer " +
+                        "mode, choose \"Load unpacked\", and pick the folder below. Firefox: " +
+                        "about:debugging → This Firefox → Load Temporary Add-on → pick manifest.json.",
+                    color = TextMuted, fontSize = 11.sp, lineHeight = 16.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                SelectionContainer {
+                    Text(report.extensionDir.absolutePath, color = CyanGlow, fontSize = 11.sp)
+                }
+                if (report.skipped.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Skipped: ${report.skipped.joinToString(", ")}", color = TextMuted, fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SmallActionButton(label: String, color: Color, onClick: () -> Unit) {
+    Text(
+        label,
+        color = BackgroundDeep, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(color)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 9.dp)
+    )
 }
 
 @Composable

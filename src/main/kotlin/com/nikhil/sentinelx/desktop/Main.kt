@@ -19,6 +19,7 @@ import androidx.compose.ui.window.rememberWindowState
 import com.nikhil.sentinelx.desktop.ui.AppShell
 import com.nikhil.sentinelx.desktop.ui.AppState
 import com.nikhil.sentinelx.desktop.ui.UnlockScreen
+import com.nikhil.sentinelx.desktop.ui.components.BridgeDialogs
 import com.nikhil.sentinelx.desktop.ui.theme.*
 
 fun main() {
@@ -78,6 +79,10 @@ private fun runApp() = application {
                 ) {
                     AppShell(state)
                 }
+
+                // Mounted above the shell so a browser fill/capture request floats
+                // over whatever section is showing, and survives it recomposing.
+                if (!state.locked) BridgeDialogs(state)
             }
         }
     }

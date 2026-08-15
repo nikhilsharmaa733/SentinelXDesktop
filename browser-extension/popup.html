@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      margin: 0; width: 260px;
+      font: 13px system-ui, sans-serif;
+      background: #0A0E14; color: #EAE0CC;
+    }
+    .head { padding: 14px 16px 8px; }
+    .title { color: #D4A853; font-weight: 800; letter-spacing: 3px; font-size: 13px; }
+    .sub { color: #665E50; font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
+    .status { margin: 8px 16px 16px; padding: 12px; border-radius: 10px;
+              background: #1A1A1E; border: 1px solid #2A2A30; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+    .ok { background: #2ED573; }
+    .off { background: #FF4757; }
+    .line { color: #AA9E88; font-size: 11px; margin-top: 8px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <div class="title">SENTINEL X</div>
+    <div class="sub">BROWSER BRIDGE</div>
+  </div>
+  <div class="status">
+    <div><span id="dot" class="dot off"></span><span id="state">Checking…</span></div>
+    <div class="line" id="hint">Talks only to the SentinelX app on this machine.</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

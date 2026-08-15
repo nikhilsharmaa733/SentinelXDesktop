@@ -38,6 +38,17 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
+// The browser extension lives at the repo root (browser-extension/) as the single
+// editable source, and is bundled into the jar under bridge/extension/ so a packaged
+// install (.deb/.msi/.dmg) can extract and lay it down. Keeping one copy avoids the
+// two drifting; BridgeInstaller reads it from the classpath, never from the repo.
+val bundleExtension by tasks.registering(Copy::class) {
+    from("browser-extension")
+    into(layout.buildDirectory.dir("generated/bridge-extension/bridge/extension"))
+}
+sourceSets["main"].resources.srcDir(layout.buildDirectory.dir("generated/bridge-extension"))
+tasks.named("processResources") { dependsOn(bundleExtension) }
+
 tasks.test {
     useJUnitPlatform()
 

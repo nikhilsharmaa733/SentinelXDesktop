@@ -156,9 +156,56 @@ Output is counts and integrity checks only — no field values — so it is safe
   folders and notes the way `mergeLedger` couples accounts and rows.
 - ✅ Import and export `.sxv`, CSV export for the ledger
 - ✅ Version history (undo), favourites
+- ✅ **Browser bridge** (`core/bridge/`, `ui/BridgeController.kt`,
+  `ui/components/BridgeDialogs.kt`, `browser-extension/`) — the desktop counterpart of
+  the phone's autofill service. Fill matching logins into browser forms and capture new
+  ones back, over a **local Unix-domain socket** in `$XDG_RUNTIME_DIR` — never a network
+  port. Off by default; the Overview "Browser Bridge" card toggles it (preference
+  persisted in the `bridge` sidecar) and installs the native-messaging host + per-browser
+  manifests (`BridgeInstaller`). See the dedicated section below.
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
 
-122 tests passing.
+129 tests passing.
+
+## Browser bridge — trust model mirrors the phone
+
+The desktop has no OS autofill framework, so filling in a browser goes through a
+**Manifest-V3 extension → native-messaging host (Python) → Unix socket → the running
+app**. The trust model is deliberately the phone's, translated:
+
+- **`core/bridge/BridgeMatcher.kt` is byte-identical to the Android app's
+  `autofill/AutofillMatcher.kt`** apart from the package line and mirror note — the same
+  login must match the same site on both. Change a heuristic on one side, change it on
+  the other in the same pair of commits; a `diff` of the two bodies is the check. There
+  are matcher tests on both sides that will diverge if they drift.
+- **Query returns candidates with NO password** (the browser dropdown = the phone's
+  suggestions, which appear without auth). **Fill is the guarded moment**: it blocks the
+  socket worker on an in-app approval dialog — the phone gates it with a fingerprint, the
+  desktop with an explicit confirm, and optionally the master password
+  (`requireMasterConfirm`, `AppState.verifyMasterPassword`). Denial or timeout releases
+  nothing. **Capture always shows the editable-site confirm sheet** and writes through
+  `upsertLogin` on the app thread, never from the worker; a duplicate `(site, username)`
+  is called out as a REPLACE and reuses the row id.
+- **The socket is user-private, never networked.** `BridgeServer` binds an `AF_UNIX`
+  socket `0600` inside a `0700` dir in `$XDG_RUNTIME_DIR`, runs only between unlock and
+  lock, and deletes the socket on stop. The password never appears in a query or a match
+  — only in a `secret` reply after approval.
+- **The extension identity is pinned.** `manifest.json` carries a fixed public `key`, so
+  its Chromium id is deterministic (`lgijklkbehpbmjappnbkoipafgbbbbia`); the
+  native-messaging manifests authorise *only* that id / the Firefox add-on id, so no
+  other extension can talk to the host. If you regenerate the key, update
+  `BridgeInstaller.CHROME_EXT_ID` to match or every fill silently fails.
+- **The extension is bundled into the jar** under `bridge/extension/` (gradle
+  `bundleExtension` copies `browser-extension/` into resources — that root folder is the
+  one editable source, don't fork a second copy). `BridgeInstaller` extracts it plus the
+  host to `~/.local/share/SentinelX/`. The end-to-end test (`BridgeEndToEndTest`) spawns
+  the real Python host against a live `BridgeServer` and round-trips query+fill; it skips
+  if `python3` is absent.
+- **Snap/Flatpak Firefox** keep a private HOME, so the installer also writes manifests to
+  `~/snap/firefox/common/.mozilla/…` and the flatpak path. Snap confinement can still
+  block executing an out-of-snap host — the deb/system Firefox and all Chromium browsers
+  are the reliable targets. Windows keys native hosts through the registry, not files;
+  the installer notes that rather than attempting it.
 
 ## Releasing
 

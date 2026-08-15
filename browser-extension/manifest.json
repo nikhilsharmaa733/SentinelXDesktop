@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "SentinelX Bridge",
+  "version": "1.0.0",
+  "description": "Fill and capture logins from your local SentinelX vault. Talks only to the SentinelX app on this machine — never to any server.",
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvfyVlI+ewdSydNz2q5xmps1LvKXQCVlRSNVZagilPIN92BS/IumGOF7SgPwoo7Vyz8KLYg4vcPtF30I8QGiGqU5w8pA0am7g7kYKd5J80drTtxWVOskaaBy0SNdEBfzB4Bh+xXN9QGtDzA7cm1Y5y3aE6kVOS+nIsQxVSagewZDZ9ylWw7xTh3LBP5/gBsEWQLEG2X8lMnVwdql8no1HEHMe3zX4nAsYICIMl0nB3AfazCB6fnP/6n4nVdr54NcJlR7ml6pxJxXIqbPL85VixkAE+vfMwNJa+mtaER9G+eF7/h3M9RkO22m2bTPHg3O3gs2o/5KZdSXqNBSWL4DKAwIDAQAB",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sentinelx-bridge@nikhil.local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SentinelX Bridge",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

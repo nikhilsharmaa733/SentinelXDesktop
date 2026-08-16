@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
+import com.nikhil.sentinelx.desktop.core.format.BankTxnEntity
 import com.nikhil.sentinelx.desktop.core.format.CashBook
 import com.nikhil.sentinelx.desktop.core.format.CashEntryEntity
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
@@ -32,10 +33,12 @@ import com.nikhil.sentinelx.desktop.ui.components.LocalPanelScope
 import com.nikhil.sentinelx.desktop.ui.components.PanelScope
 import com.nikhil.sentinelx.desktop.ui.panes.AccountEditor
 import com.nikhil.sentinelx.desktop.ui.panes.ArtifactEditor
+import com.nikhil.sentinelx.desktop.ui.panes.BankTxnEditor
 import com.nikhil.sentinelx.desktop.ui.panes.CashEntryEditor
 import com.nikhil.sentinelx.desktop.ui.panes.ChronicleEditor
 import com.nikhil.sentinelx.desktop.ui.panes.LoginEditor
 import com.nikhil.sentinelx.desktop.ui.panes.NoteEditor
+import com.nikhil.sentinelx.desktop.ui.panes.StatementImportWizard
 import com.nikhil.sentinelx.desktop.ui.panes.TransactionEditor
 import kotlin.math.roundToInt
 
@@ -101,6 +104,20 @@ sealed interface PanelRequest {
         val seedDenominations: Map<Int, Int> = emptyMap()
     ) : PanelRequest {
         override val identity get() = existing?.let { "cash:${it.id}" }
+    }
+
+    data class BankTxn(val existing: BankTxnEntity) : PanelRequest {
+        override val identity get() = "bank:${existing.id}"
+    }
+
+    /**
+     * The statement import wizard. A constant identity on purpose: there is
+     * exactly one import in flight at a time, and clicking IMPORT again raises
+     * the wizard mid-flow instead of opening a second one that would race the
+     * first over the same book.
+     */
+    data class StatementImport(val defaultBook: String?) : PanelRequest {
+        override val identity get() = "statement-import"
     }
 }
 
@@ -292,6 +309,12 @@ private fun PanelContent(state: AppState, panel: Panel, onClose: () -> Unit) {
                 seedDenominations = request.seedDenominations,
                 onClose = onClose
             )
+
+        is PanelRequest.BankTxn ->
+            BankTxnEditor(state, request.existing, onClose)
+
+        is PanelRequest.StatementImport ->
+            StatementImportWizard(state, request.defaultBook, onClose)
     }
 }
 

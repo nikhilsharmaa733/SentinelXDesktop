@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nikhil.sentinelx.desktop.core.format.BankTxnEntity
@@ -38,6 +39,7 @@ import com.nikhil.sentinelx.desktop.core.format.signedAmount
 import com.nikhil.sentinelx.desktop.core.format.totalIn
 import com.nikhil.sentinelx.desktop.core.format.totalOut
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
@@ -63,8 +65,6 @@ fun BankPane(state: AppState) {
     var query by remember { mutableStateOf("") }
     var month by remember { mutableStateOf<YearMonth?>(null) }
     var direction by remember { mutableStateOf<String?>(null) }  // null · "C" · "D"
-    var wizardOpen by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<BankTxnEntity?>(null) }
     var renamingBook by remember { mutableStateOf<String?>(null) }
     var deletingBook by remember { mutableStateOf<String?>(null) }
 
@@ -114,7 +114,12 @@ fun BankPane(state: AppState) {
         ) {
             TransferActions(state, Section.BANK)
             Spacer(Modifier.width(10.dp))
-            ImportStatementButton { wizardOpen = true }
+            // A floating panel like every other editor — draggable, resizable,
+            // non-modal, deduplicated on its identity so a second click raises
+            // the wizard already in flight instead of racing it.
+            ImportStatementButton {
+                state.panels.open(PanelRequest.StatementImport(selectedBook))
+            }
         }
 
         if (all.isEmpty()) {
@@ -172,9 +177,10 @@ fun BankPane(state: AppState) {
                             Text("Nothing matches the filter", color = TextMuted, fontSize = 12.sp)
                         }
                     } else {
+                        TxnColumnsHeader()
                         LazyColumn(Modifier.weight(1f)) {
                             items(filtered, key = { it.id }) { txn ->
-                                TxnRow(txn) { editing = txn }
+                                TxnRow(txn) { state.panels.open(PanelRequest.BankTxn(txn)) }
                             }
                             item { Spacer(Modifier.height(20.dp)) }
                         }
@@ -184,22 +190,6 @@ fun BankPane(state: AppState) {
         }
     }
 
-    if (wizardOpen) {
-        StatementImportWizard(
-            state = state,
-            defaultBook = selectedBook,
-            onClose = { wizardOpen = false }
-        )
-    }
-    editing?.let { txn ->
-        BankTxnEditor(
-            txn = txn,
-            books = books,
-            onSave = { state.upsertBankTxn(it); editing = null },
-            onDelete = { state.deleteBankTxn(txn.id); editing = null },
-            onCancel = { editing = null }
-        )
-    }
     renamingBook?.let { book ->
         RenameBookDialog(
             current = book,
@@ -487,9 +477,35 @@ private fun CategoryStrip(txns: List<BankTxnEntity>) {
     }
 }
 
+// Fixed column widths shared by the header and every row, so they line up as
+// real columns — the classic passbook layout: Date · Particulars · Debit ·
+// Credit · Balance.
+private val DEBIT_COL = 96.dp
+private val CREDIT_COL = 96.dp
+private val BALANCE_COL = 104.dp
+
+@Composable
+private fun TxnColumnsHeader() {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("DATE", color = TextMuted, fontSize = 8.sp, letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold, modifier = Modifier.width(46.dp))
+        Spacer(Modifier.width(10.dp))
+        Text("PARTICULARS", color = TextMuted, fontSize = 8.sp, letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        Text("DEBIT", color = ExpenseRed.copy(0.75f), fontSize = 8.sp, letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.End, modifier = Modifier.width(DEBIT_COL))
+        Text("CREDIT", color = IncomeGreen.copy(0.75f), fontSize = 8.sp, letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.End, modifier = Modifier.width(CREDIT_COL))
+        Text("BALANCE", color = TextMuted, fontSize = 8.sp, letterSpacing = 1.5.sp,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.End, modifier = Modifier.width(BALANCE_COL))
+    }
+}
+
 @Composable
 private fun TxnRow(txn: BankTxnEntity, onClick: () -> Unit) {
-    val tone = if (txn.isCredit()) IncomeGreen else ExpenseRed
     val date = businessDateOf(txn.txnDate)
     Row(
         Modifier
@@ -523,26 +539,49 @@ private fun TxnRow(txn: BankTxnEntity, onClick: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(2.dp))
-            Text(
-                listOfNotNull(
-                    txn.remark?.takeIf { it.isNotBlank() && !it.equals("NO REM", true) },
-                    txn.narration.replace('\n', ' ')
-                ).first().take(96),
-                color = TextMuted, fontSize = 10.sp, maxLines = 1
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Pill(txn.category.uppercase(), accentFor(txn.category))
-        Spacer(Modifier.width(12.dp))
-        Column(horizontalAlignment = Alignment.End) {
-            Text(
-                (if (txn.isCredit()) "+" else "−") + formatMoney(txn.amount),
-                color = tone, fontSize = 13.sp, fontWeight = FontWeight.Black
-            )
-            txn.balance?.let {
-                Text("bal ${formatMoney(it)}", color = TextMuted, fontSize = 8.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // The remark is what the user themselves typed with the payment
+                // — first-class information, highlighted beside the name, never
+                // buried in the muted narration grey.
+                val remark = txn.remark?.takeIf {
+                    it.isNotBlank() && !it.equals("NO REM", true) && !it.equals("NOREM", true)
+                }
+                if (remark != null) {
+                    Text(
+                        "❝ ${remark.take(60)}",
+                        color = GoldIce, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, modifier = Modifier.weight(1f, fill = false)
+                    )
+                } else {
+                    Text(
+                        txn.narration.replace('\n', ' ').take(80),
+                        color = TextMuted, fontSize = 10.sp, maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Pill(txn.category.uppercase(), accentFor(txn.category))
             }
         }
+        // The two money columns of a real cash book: an amount lives in exactly
+        // one of them, and the empty side stays visibly empty.
+        Text(
+            if (txn.isCredit()) "—" else formatMoney(txn.amount),
+            color = if (txn.isCredit()) TextMuted.copy(0.35f) else ExpenseRed,
+            fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1,
+            textAlign = TextAlign.End, modifier = Modifier.width(DEBIT_COL)
+        )
+        Text(
+            if (txn.isCredit()) formatMoney(txn.amount) else "—",
+            color = if (txn.isCredit()) IncomeGreen else TextMuted.copy(0.35f),
+            fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1,
+            textAlign = TextAlign.End, modifier = Modifier.width(CREDIT_COL)
+        )
+        Text(
+            txn.balance?.let { formatMoney(it) } ?: "",
+            color = TextSubtle, fontSize = 10.sp, maxLines = 1,
+            textAlign = TextAlign.End, modifier = Modifier.width(BALANCE_COL)
+        )
     }
 }
 
@@ -551,14 +590,15 @@ private fun TxnRow(txn: BankTxnEntity, onClick: () -> Unit) {
 /**
  * Edits the human fields. The narration is shown but not editable — it is the
  * imported record; what the user curates are the labels laid over it.
+ *
+ * Called from [com.nikhil.sentinelx.desktop.ui.PanelHost] via
+ * `PanelRequest.BankTxn`, so it floats like every other editor.
  */
 @Composable
-private fun BankTxnEditor(
+fun BankTxnEditor(
+    state: AppState,
     txn: BankTxnEntity,
-    books: List<String>,
-    onSave: (BankTxnEntity) -> Unit,
-    onDelete: () -> Unit,
-    onCancel: () -> Unit
+    onClose: () -> Unit
 ) {
     var party by remember { mutableStateOf(txn.party ?: "") }
     var category by remember { mutableStateOf(txn.category) }
@@ -570,7 +610,7 @@ private fun BankTxnEditor(
         title = "Transaction",
         canSave = true,
         onSave = {
-            onSave(
+            state.upsertBankTxn(
                 txn.copy(
                     party = party.trim().ifEmpty { null },
                     category = category.trim().ifEmpty { com.nikhil.sentinelx.desktop.core.format.BankBook.CAT_OTHER },
@@ -578,8 +618,9 @@ private fun BankTxnEditor(
                     reference = reference.trim().ifEmpty { null }
                 )
             )
+            onClose()
         },
-        onCancel = onCancel,
+        onCancel = onClose,
         onDelete = { confirmDelete = true },
         width = 620
     ) {
@@ -625,7 +666,11 @@ private fun BankTxnEditor(
     if (confirmDelete) {
         ConfirmDelete(
             itemName = txn.displayParty(),
-            onConfirm = { confirmDelete = false; onDelete() },
+            onConfirm = {
+                confirmDelete = false
+                state.deleteBankTxn(txn.id)
+                onClose()
+            },
             onDismiss = { confirmDelete = false }
         )
     }

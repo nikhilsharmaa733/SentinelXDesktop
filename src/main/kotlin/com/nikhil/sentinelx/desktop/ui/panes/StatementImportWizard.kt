@@ -1,8 +1,10 @@
 package com.nikhil.sentinelx.desktop.ui.panes
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,8 +23,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -37,11 +46,14 @@ import com.nikhil.sentinelx.desktop.core.statement.StatementPasswordRequired
 import com.nikhil.sentinelx.desktop.core.statement.StatementReadException
 import com.nikhil.sentinelx.desktop.core.statement.StatementReader
 import com.nikhil.sentinelx.desktop.ui.AppState
+import com.nikhil.sentinelx.desktop.ui.components.LocalPanelScope
+import com.nikhil.sentinelx.desktop.ui.components.PanelScope
 import com.nikhil.sentinelx.desktop.ui.components.Pill
 import com.nikhil.sentinelx.desktop.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.awt.Cursor
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
@@ -60,6 +72,33 @@ import java.util.Locale
  */
 @Composable
 fun StatementImportWizard(state: AppState, defaultBook: String?, onClose: () -> Unit) {
+    // Panel first, modal fallback second — the EditorDialog contract. Opened
+    // through PanelRequest.StatementImport this is a floating panel: dragged by
+    // its title bar, resized by the corner grip, non-modal so the Bank pane
+    // stays live behind it (check a book, copy a name, keep importing).
+    val panel = LocalPanelScope.current
+    if (panel == null) {
+        Dialog(
+            onDismissRequest = onClose,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            WizardSurface(state, defaultBook, onClose, panel = null)
+        }
+    } else {
+        WizardSurface(state, defaultBook, onClose, panel)
+    }
+}
+
+private val wizardMoveCursor = PointerIcon(Cursor(Cursor.MOVE_CURSOR))
+private val wizardResizeCursor = PointerIcon(Cursor(Cursor.SE_RESIZE_CURSOR))
+
+@Composable
+private fun WizardSurface(
+    state: AppState,
+    defaultBook: String?,
+    onClose: () -> Unit,
+    panel: PanelScope?
+) {
     val scope = rememberCoroutineScope()
 
     var fileName by remember { mutableStateOf<String?>(null) }
@@ -153,27 +192,53 @@ fun StatementImportWizard(state: AppState, defaultBook: String?, onClose: () -> 
         if (book.isBlank()) outcome?.suggestedBook?.let { book = it }
     }
 
-    // usePlatformDefaultWidth = false is load-bearing: the default coerces the
-    // dialog down to the platform's narrow dialog width, the footer row then
-    // overflows horizontally, and the NEXT button gets clipped off the edge.
-    Dialog(
-        onDismissRequest = { if (!reading) onClose() },
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-    ) {
+    // ── The surface ──────────────────────────────────────────────────────────
+    // As a panel it wears the full floating chrome: shadow, title-bar drag,
+    // corner resize grip. The gesture blocks are keyed on Unit and read the
+    // scope through rememberUpdatedState — re-keying a pointerInput mid-drag
+    // cancels the drag (the documented Panels gotcha).
+    val density = LocalDensity.current
+    val live = rememberUpdatedState(panel)
+    val naturalWidthPx = with(density) { 880.dp.toPx() }
+    var naturalBodyHeight by remember { mutableStateOf(0f) }
+    val naturalSize = rememberUpdatedState(naturalWidthPx to naturalBodyHeight)
+    val lit = panel == null || panel.focused
+
+    Box {
         Column(
             Modifier
-                .width(880.dp)
-                .heightIn(max = 640.dp)
+                .width(panel?.width?.let { with(density) { it.toDp() } } ?: 880.dp)
+                .then(if (panel != null) Modifier.shadow(30.dp, RoundedCornerShape(20.dp)) else Modifier)
                 .clip(RoundedCornerShape(20.dp))
                 .background(BackgroundDeep)
-                .border(1.dp, GoldDark.copy(0.4f), RoundedCornerShape(20.dp))
+                .border(
+                    1.dp,
+                    if (lit) GoldDark.copy(0.4f) else GoldDark.copy(0.16f),
+                    RoundedCornerShape(20.dp)
+                )
                 .padding(26.dp)
         ) {
-            // ── Title + stepper ──────────────────────────────────────────────
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // ── Title + stepper — the drag handle ────────────────────────────
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (panel == null) Modifier
+                        else Modifier
+                            .pointerHoverIcon(wizardMoveCursor)
+                            .pointerInput(Unit) {
+                                detectDragGestures { change, drag ->
+                                    change.consume()
+                                    live.value?.onDrag(drag)
+                                }
+                            }
+                    ),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
                     "IMPORT STATEMENT",
-                    color = GoldTarnished, fontSize = 17.sp, fontWeight = FontWeight.Black,
+                    color = if (lit) GoldTarnished else GoldDark,
+                    fontSize = 17.sp, fontWeight = FontWeight.Black,
                     fontFamily = FontFamily.Serif, letterSpacing = 2.sp
                 )
                 Spacer(Modifier.weight(1f))
@@ -184,6 +249,17 @@ fun StatementImportWizard(state: AppState, defaultBook: String?, onClose: () -> 
                             Modifier.width(14.dp).height(1.dp)
                                 .background(if (i < step) GoldTarnished.copy(0.5f) else GoldDark.copy(0.25f))
                         )
+                    }
+                }
+                if (panel != null) {
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onClose() }
+                            .padding(horizontal = 9.dp, vertical = 4.dp)
+                    ) {
+                        Text("✕", color = TextMuted, fontSize = 13.sp)
                     }
                 }
             }
@@ -198,6 +274,21 @@ fun StatementImportWizard(state: AppState, defaultBook: String?, onClose: () -> 
             HorizontalDivider(color = GoldDark.copy(0.15f))
             Spacer(Modifier.height(14.dp))
 
+            // ── Step body — the region the grip resizes ──────────────────────
+            // Measured only while at its natural size, so a resize starts from
+            // where the panel already is instead of snapping (EditorDialog's
+            // naturalContentHeight contract).
+            Column(
+                Modifier
+                    .then(
+                        panel?.contentHeight
+                            ?.let { Modifier.height(with(density) { it.toDp() }) }
+                            ?: Modifier.heightIn(max = 520.dp)
+                    )
+                    .onSizeChanged {
+                        if (panel?.contentHeight == null) naturalBodyHeight = it.height.toFloat()
+                    }
+            ) {
             when (step) {
                 0 -> FileStep(
                     reading = reading,
@@ -275,6 +366,40 @@ fun StatementImportWizard(state: AppState, defaultBook: String?, onClose: () -> 
                     fileName = fileName,
                     onClose = onClose
                 )
+            }
+            }
+        }
+
+        if (panel != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(22.dp)
+                    .pointerHoverIcon(wizardResizeCursor)
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = {
+                                val (w, h) = naturalSize.value
+                                live.value?.onResizeBegin(w, h)
+                            }
+                        ) { change, drag ->
+                            change.consume()
+                            live.value?.onResize(drag)
+                        }
+                    }
+            ) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val tint = GoldDark.copy(0.55f)
+                    repeat(3) { i ->
+                        val inset = 3.dp.toPx() + i * 4.dp.toPx()
+                        drawLine(
+                            color = tint,
+                            start = Offset(size.width - inset, size.height - 3.dp.toPx()),
+                            end = Offset(size.width - 3.dp.toPx(), size.height - inset),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+                }
             }
         }
     }
@@ -411,10 +536,13 @@ private fun MappingStep(
 
     // The step scaffold every tall step uses: content in a weighted scroll area,
     // footer pinned below it. Without the weight, tall content eats the dialog's
-    // height budget and pushes BACK/NEXT past the clipped max height.
+    // height budget and pushes BACK/NEXT past the clipped max height. When the
+    // panel has been resized (contentHeight set), the area stretches so the
+    // footer sits at the grip's bottom edge rather than floating mid-panel.
+    val stretch = LocalPanelScope.current?.contentHeight != null
     Column(Modifier.fillMaxWidth()) {
         Column(
-            Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+            Modifier.weight(1f, fill = stretch).verticalScroll(rememberScrollState())
         ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -578,9 +706,10 @@ private fun FieldsStep(
 ) {
     // Same pinned-footer scaffold as MappingStep: the toggles plus preview can
     // outgrow the dialog, and NEXT must survive that.
+    val stretch = LocalPanelScope.current?.contentHeight != null
     Column(Modifier.fillMaxWidth()) {
         Column(
-            Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+            Modifier.weight(1f, fill = stretch).verticalScroll(rememberScrollState())
         ) {
         Text(
             "The narration packs several facts into one line. Pick which ones to pull out " +
@@ -743,8 +872,13 @@ private fun ReviewStep(
         }
         Spacer(Modifier.height(10.dp))
 
+        // Unresized: cap the list so the dialog stays compact. Resized: let it
+        // take exactly the height the grip granted.
+        val stretch = LocalPanelScope.current?.contentHeight != null
         LazyColumn(
-            Modifier.weight(1f, fill = false).heightIn(max = 330.dp).fillMaxWidth()
+            Modifier.weight(1f, fill = stretch)
+                .then(if (stretch) Modifier else Modifier.heightIn(max = 330.dp))
+                .fillMaxWidth()
         ) {
             items(outcome.rows, key = { it.fingerprint }) { row ->
                 ReviewRow(

@@ -93,23 +93,33 @@ class VaultStore(private val dir: File) {
          * rename is atomic on both NTFS and ext4.
          *
          * The previous version is snapshotted first, so a bad edit is recoverable.
+         *
+         * Serialised under [saveLock] with a per-write temp file: saves can now
+         * originate from more than one thread (the UI, an import on a worker,
+         * a bridge capture confirmed while an import runs), and two concurrent
+         * writers sharing one fixed temp path could interleave bytes and publish
+         * a torn ciphertext — an unlockable vault, the worst possible failure.
          */
         fun save(backup: MasterBackup) {
             requireOpen()
-            dir.mkdirs(); imagesDir.mkdirs(); versionsDir.mkdirs()
+            synchronized(saveLock) {
+                dir.mkdirs(); imagesDir.mkdirs(); versionsDir.mkdirs()
 
-            if (metaFile.isFile) snapshot()
+                if (metaFile.isFile) snapshot()
 
-            val sealed = LocalCrypto.sealDocument(
-                Gson().toJson(backup).toByteArray(Charsets.UTF_8), key, salt
-            )
-            val temp = File(dir, "vault.meta.tmp")
-            temp.writeBytes(sealed)
-            if (!temp.renameTo(metaFile)) {
-                temp.copyTo(metaFile, overwrite = true)
-                temp.delete()
+                val sealed = LocalCrypto.sealDocument(
+                    Gson().toJson(backup).toByteArray(Charsets.UTF_8), key, salt
+                )
+                val temp = File.createTempFile("vault.meta.", ".tmp", dir)
+                temp.writeBytes(sealed)
+                if (!temp.renameTo(metaFile)) {
+                    temp.copyTo(metaFile, overwrite = true)
+                    temp.delete()
+                }
             }
         }
+
+        private val saveLock = Any()
 
         // ── Images ────────────────────────────────────────────────────────────
 

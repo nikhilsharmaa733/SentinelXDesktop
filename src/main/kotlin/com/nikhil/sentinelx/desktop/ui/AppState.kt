@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
+import com.nikhil.sentinelx.desktop.core.format.BankTxnEntity
 import com.nikhil.sentinelx.desktop.core.format.CashEntryEntity
 import com.nikhil.sentinelx.desktop.core.format.CheckItem
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
@@ -44,7 +45,8 @@ enum class Section(val label: String, val glyph: String, val wire: String?) {
     NOTES("Notes", "ᚱ", VaultSection.NOTES),
     CHRONICLES("Chronicles", "ᛀ", VaultSection.CHRONICLES),
     LEDGER("Ledger", "ᚢ", VaultSection.LEDGER),
-    CASHBOOK("Cash Book", "ᛃ", VaultSection.CASHBOOK)
+    CASHBOOK("Cash Book", "ᛃ", VaultSection.CASHBOOK),
+    BANK("Bank Book", "ᛒ", VaultSection.BANK)
 }
 
 /**
@@ -88,7 +90,16 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
      */
     val bridge = BridgeController(
         loginsProvider = { backup.logins },
-        onCaptureConfirmed = { upsertLogin(it) }
+        // Returns whether the write actually happened — a vault that locked
+        // between the capture arriving and the user confirming must not let
+        // the browser be told "saved".
+        onCaptureConfirmed = { login ->
+            if (session == null) false
+            else {
+                upsertLogin(login)
+                true
+            }
+        }
     )
 
     val vaultExists: Boolean get() = store.exists
@@ -445,6 +456,65 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     }
 
     fun deleteCashEntry(id: Long) = mutate { b -> b.copy(cashBook = b.cashBook.filterNot { it.id == id }) }
+
+    // ── Bank book ─────────────────────────────────────────────────────────────
+
+    fun upsertBankTxn(txn: BankTxnEntity) = mutate { b ->
+        val id = if (txn.id == 0L) nextLongId(b.bankTxns) { it.id } else txn.id
+        val entry = txn.copy(id = id, timestamp = txn.timestamp.orNow())
+        b.copy(bankTxns = b.bankTxns.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteBankTxn(id: Long) = mutate { b -> b.copy(bankTxns = b.bankTxns.filterNot { it.id == id }) }
+
+    /** Deletes a whole statement book and every transaction in it. */
+    fun deleteBankBook(book: String) = mutate { b ->
+        b.copy(bankTxns = b.bankTxns.filterNot { it.book.equals(book, ignoreCase = true) })
+    }
+
+    /**
+     * Renames a book across its member rows. Fingerprints deliberately exclude
+     * the book name (merge identity is the *pair*), so this rewrites one field
+     * and invalidates nothing.
+     */
+    fun renameBankBook(oldName: String, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty() || trimmed.equals(oldName, ignoreCase = true)) return
+        mutate { b ->
+            b.copy(bankTxns = b.bankTxns.map {
+                if (it.book.equals(oldName, ignoreCase = true)) it.copy(book = trimmed) else it
+            })
+        }
+    }
+
+    /**
+     * Commits one parsed statement as ONE mutation — one save, one undo
+     * snapshot — deduplicating on `(book, fingerprint)` against what the vault
+     * already holds. Returns imported to duplicate counts for the report.
+     */
+    fun importBankTxns(book: String, rows: List<BankTxnEntity>): Pair<Int, Int> {
+        val trimmedBook = book.trim().ifEmpty { "Bank" }
+        var imported = 0
+        var duplicates = 0
+        mutate { b ->
+            val seen = b.bankTxns
+                .mapTo(HashSet()) { it.book.trim().lowercase() to it.fingerprint }
+            var next = (b.bankTxns.maxOfOrNull { it.id } ?: 0L) + 1
+            val fresh = ArrayList<BankTxnEntity>(rows.size)
+            val now = System.currentTimeMillis()
+            for (row in rows) {
+                val key = trimmedBook.lowercase() to row.fingerprint
+                if (!seen.add(key)) {
+                    duplicates++
+                    continue
+                }
+                fresh.add(row.copy(id = next++, book = trimmedBook, timestamp = now))
+                imported++
+            }
+            b.copy(bankTxns = b.bankTxns + fresh)
+        }
+        return imported to duplicates
+    }
 
     /**
      * Names already used as counter or verifier, most recent first.

@@ -21,17 +21,31 @@ class BridgeFillRequest(
     fun deny() = decision.complete(false)
 }
 
-/** A captured credential awaiting confirmation. [siteName] is editable before sealing. */
+/**
+ * A captured credential awaiting confirmation. [siteName] is editable before
+ * sealing. **The vault write happens inside [confirm], on the thread that
+ * calls it** — the dialog's UI thread — never on the socket worker; the worker
+ * only learns the outcome through the future. That is what keeps every vault
+ * mutation on one thread, and what makes the browser's `saved` ack truthful:
+ * it is sent only after the write actually happened.
+ */
 class BridgeCaptureRequest(
     val suggestedSite: String,
     val username: String,
     val password: String,
     val domain: String,
     val duplicateOf: LoginEntity?,
+    /** Performs the write; returns false when the vault refused (e.g. locked). */
+    private val write: (site: String) -> Boolean,
     private val decision: CompletableFuture<String?>
 ) {
-    /** Seal under [site]; null = declined. */
-    fun confirm(site: String) = decision.complete(site)
+    /** Seal under [site]. Runs the write on the calling (UI) thread. */
+    fun confirm(site: String) {
+        val trimmed = site.trim()
+        val ok = trimmed.isNotEmpty() && runCatching { write(trimmed) }.getOrDefault(false)
+        decision.complete(if (ok) trimmed else null)
+    }
+
     fun decline() = decision.complete(null)
 }
 
@@ -43,21 +57,24 @@ class BridgeCaptureRequest(
  *  - **Query** (the browser dropdown) returns matching site+username with **no
  *    password**, needing no approval — exactly as the phone shows suggestions
  *    before any biometric.
- *  - **Fill** is the guarded moment. It blocks the worker thread on an in-app
- *    approval dialog; the phone gates this with a fingerprint, the desktop with
- *    an explicit confirm (and, when [requireMasterConfirm] is on, the master
+ *  - **Fill** is the guarded moment. It blocks its worker on an in-app approval
+ *    dialog; the phone gates this with a fingerprint, the desktop with an
+ *    explicit confirm (and, when [requireMasterConfirm] is on, the master
  *    password). Denial or timeout releases nothing.
- *  - **Capture** always shows the confirm sheet with an editable site name, and
- *    calls back into [onCaptureConfirmed] to do the actual write on the app's
- *    thread — never from the socket worker.
+ *  - **Capture** always shows the confirm sheet with an editable site name; the
+ *    write runs inside the confirmation on the UI thread (see
+ *    [BridgeCaptureRequest]).
  *
- * The server runs only while the vault is unlocked and the toggle is on; locking
- * or disabling tears the socket down.
+ * Requests are **queued**, not single-slotted: two tabs asking at once both
+ * get their dialog, one after the other, and neither overwrites the other's
+ * pending state. The server runs only while the vault is unlocked and the
+ * toggle is on; locking or disabling tears the socket down and denies
+ * everything still queued.
  */
 class BridgeController(
     private val loginsProvider: () -> List<LoginEntity>,
-    private val onCaptureConfirmed: (LoginEntity) -> Unit,
-    private val appVersion: String = "1.4.0"
+    private val onCaptureConfirmed: (LoginEntity) -> Boolean,
+    private val appVersion: String = "1.5.0"
 ) : BridgeHandler {
 
     var enabled by mutableStateOf(false)
@@ -68,12 +85,17 @@ class BridgeController(
     /** Optional hardening: demand the master password at each fill, not just a click. */
     var requireMasterConfirm by mutableStateOf(false)
 
-    var pendingFill by mutableStateOf<BridgeFillRequest?>(null)
+    var pendingFills by mutableStateOf<List<BridgeFillRequest>>(emptyList())
         private set
-    var pendingCapture by mutableStateOf<BridgeCaptureRequest?>(null)
+    var pendingCaptures by mutableStateOf<List<BridgeCaptureRequest>>(emptyList())
         private set
 
+    /** What the dialogs render: the head of each queue. */
+    val pendingFill: BridgeFillRequest? get() = pendingFills.firstOrNull()
+    val pendingCapture: BridgeCaptureRequest? get() = pendingCaptures.firstOrNull()
+
     private var server: BridgeServer? = null
+    private val queueLock = Any()
 
     /** Turn the bridge on/off. Persisted by the caller; only runs while unlocked. */
     fun setEnabled(value: Boolean, unlocked: Boolean) {
@@ -87,8 +109,12 @@ class BridgeController(
     /** Called on lock: always tear down, but remember the preference. */
     fun onLocked() {
         stop()
-        pendingFill?.deny(); pendingFill = null
-        pendingCapture?.decline(); pendingCapture = null
+        synchronized(queueLock) {
+            pendingFills.forEach { it.deny() }
+            pendingFills = emptyList()
+            pendingCaptures.forEach { it.decline() }
+            pendingCaptures = emptyList()
+        }
     }
 
     private fun start() {
@@ -124,10 +150,11 @@ class BridgeController(
         if (!BridgeMatcher.matches(login.siteName, domain, "")) return null
 
         val decision = CompletableFuture<Boolean>()
-        pendingFill = BridgeFillRequest(login, domain, decision)
+        val request = BridgeFillRequest(login, domain, decision)
+        synchronized(queueLock) { pendingFills = pendingFills + request }
         val approved = runCatching { decision.get(APPROVAL_TIMEOUT_S, TimeUnit.SECONDS) }
             .getOrDefault(false)
-        pendingFill = null
+        synchronized(queueLock) { pendingFills = pendingFills - request }
         return if (approved) login.username to login.password else null
     }
 
@@ -140,19 +167,27 @@ class BridgeController(
                 BridgeMatcher.matches(it.siteName, domain, "")
         }
         val decision = CompletableFuture<String?>()
-        pendingCapture = BridgeCaptureRequest(suggested, username, password, domain, duplicate, decision)
-        val site = runCatching { decision.get(APPROVAL_TIMEOUT_S, TimeUnit.SECONDS) }.getOrNull()
-        pendingCapture = null
-        if (site.isNullOrBlank()) return null
-
-        onCaptureConfirmed(
-            LoginEntity(
-                id = duplicate?.id ?: 0,
-                siteName = site.trim(),
-                username = username.trim(),
-                password = password
-            )
+        val request = BridgeCaptureRequest(
+            suggestedSite = suggested,
+            username = username,
+            password = password,
+            domain = domain,
+            duplicateOf = duplicate,
+            write = { site ->
+                onCaptureConfirmed(
+                    LoginEntity(
+                        id = duplicate?.id ?: 0,
+                        siteName = site,
+                        username = username.trim(),
+                        password = password
+                    )
+                )
+            },
+            decision = decision
         )
+        synchronized(queueLock) { pendingCaptures = pendingCaptures + request }
+        val site = runCatching { decision.get(APPROVAL_TIMEOUT_S, TimeUnit.SECONDS) }.getOrNull()
+        synchronized(queueLock) { pendingCaptures = pendingCaptures - request }
         return site
     }
 

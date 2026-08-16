@@ -37,6 +37,7 @@ import com.nikhil.sentinelx.desktop.core.format.folderKey
 import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.ui.components.*
+import com.nikhil.sentinelx.desktop.ui.panes.BankPane
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
 import com.nikhil.sentinelx.desktop.ui.panes.CashBookPane
 import com.nikhil.sentinelx.desktop.ui.panes.ChroniclesPane
@@ -96,6 +97,7 @@ fun AppShell(state: AppState) {
                     Section.CHRONICLES -> ChroniclesPane(state)
                     Section.LEDGER -> LedgerPane(state)
                     Section.CASHBOOK -> CashBookPane(state)
+                    Section.BANK -> BankPane(state)
                 }
                 }
                 }
@@ -205,6 +207,7 @@ private fun Section.countIn(state: AppState): Int? = when (this) {
     // verification is the more actionable number, but a bare digit in the sidebar
     // can't say which of the two it is — that one gets a labelled chip in the pane.
     Section.CASHBOOK -> state.backup.cashBook.size
+    Section.BANK -> state.backup.bankTxns.size
 }
 
 @Composable
@@ -308,7 +311,8 @@ private fun OverviewPane(state: AppState) {
             Triple("Chronicles", b.chronicles.size, GoldBright),
             Triple("Accounts", b.accounts.size, IncomeGreen),
             Triple("Ledger rows", b.ledger.size, AmberWarn),
-            Triple("Cash entries", b.cashBook.size, GoldIce)
+            Triple("Cash entries", b.cashBook.size, GoldIce),
+            Triple("Bank txns", b.bankTxns.size, CyanGlow)
         )
         tiles.chunked(3).forEach { row ->
             Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {

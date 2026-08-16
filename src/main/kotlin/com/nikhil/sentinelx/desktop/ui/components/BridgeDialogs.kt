@@ -31,6 +31,9 @@ import com.nikhil.sentinelx.desktop.ui.AppState
 import com.nikhil.sentinelx.desktop.ui.BridgeCaptureRequest
 import com.nikhil.sentinelx.desktop.ui.BridgeFillRequest
 import com.nikhil.sentinelx.desktop.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The two moments the bridge surfaces to the user, mounted once at the app root
@@ -60,6 +63,8 @@ private fun FillApprovalDialog(
 ) {
     var master by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     Dialog(onDismissRequest = { req.deny() }) {
         Column(
@@ -108,10 +113,17 @@ private fun FillApprovalDialog(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 DialogText("DENY", TextMuted) { req.deny() }
                 Spacer(Modifier.width(8.dp))
-                DialogButton(if (req.domain.isBlank()) "FILL" else "FILL", CyanGlow) {
+                DialogButton(if (checking) "CHECKING…" else "FILL", CyanGlow, enabled = !checking) {
                     if (requireMaster) {
-                        val ok = verifyMaster(master.toCharArray())
-                        if (ok) req.approve() else wrong = true
+                        // Argon2id takes ~1s by design — off the UI thread, like
+                        // every other call site, or the window freezes per fill.
+                        checking = true
+                        val entered = master.toCharArray()
+                        scope.launch {
+                            val ok = withContext(Dispatchers.Default) { verifyMaster(entered) }
+                            checking = false
+                            if (ok) req.approve() else wrong = true
+                        }
                     } else {
                         req.approve()
                     }

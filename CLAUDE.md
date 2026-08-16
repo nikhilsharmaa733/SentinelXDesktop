@@ -164,8 +164,51 @@ Output is counts and integrity checks only — no field values — so it is safe
   persisted in the `bridge` sidecar) and installs the native-messaging host + per-browser
   manifests (`BridgeInstaller`). See the dedicated section below.
 - ✅ **Cross-platform installers via CI** — Windows/Linux/macOS. See "Releasing" below.
+- ✅ **Bank Book** (`ui/panes/BankPane.kt`, `ui/panes/StatementImportWizard.kt`,
+  `core/statement/`) — bank-statement import and analysis. The wizard reads
+  **CSV/TSV, XLSX, real BIFF8 `.xls`, the fake-HTML `.xls` several banks serve,
+  ODS, and PDF — including password-protected PDFs** (standard security
+  handler: RC4-40/128, AES-128, AES-256 all implemented in
+  `core/statement/PdfDocument.kt`). Flow: FILE → COLUMNS (auto-mapped,
+  overridable) → FIELDS (per-field extraction toggles over the narration) →
+  REVIEW (checkbox per row, duplicates pre-unticked, balance mismatches
+  flagged) → one-mutation commit. `MasterBackup` gained `bankTxns`
+  (**archive version unchanged** — additive, like notes-v8), `VaultSection.BANK`,
+  and `VaultMerge` merges on `(book, fingerprint)`. See the dedicated section
+  below before touching any of it.
 
-129 tests passing.
+159 tests passing.
+
+## Bank Book — read before touching `core/statement`
+
+- **`core/statement/` is a MIRRORED PACKAGE** — byte-identical to the Android
+  app's `statement/` package apart from package lines, exactly like
+  `VaultMerge.kt` and `BridgeMatcher.kt`. The same statement file must produce
+  the same fingerprints on both apps or cross-device re-imports duplicate
+  instead of deduplicating. `diff -r` of the two directories is the check.
+- **Zero dependencies, on purpose.** Every reader (zip/XML, OLE2/BIFF, PDF
+  incl. decryption) is hand-rolled over `java.base` + `javax.crypto` so the
+  package can exist on the phone without adding a single manifest entry or
+  transitive network pull. Do not "simplify" by adding POI or PDFBox.
+- **Dispatch is by content, never extension** (`StatementReader`): banks serve
+  HTML and CSV with `.xls` names. Magic bytes decide the reader.
+- **`narration` is authoritative; the extracted fields are commentary.** Same
+  contract as cash-book `amount`/`denominations`: mode/party/reference/remark/
+  bank are wizard-chosen labels over the untouched original line.
+- **`fingerprint` is the dedup identity** (`StatementParse.fingerprintOf`:
+  date + amount + direction + reference + normalised narration + balance, with
+  deterministic `#n` suffixes for intra-statement twins). The **book stays
+  outside the hash** so renaming a book rewrites one field and invalidates
+  nothing; merge identity is the pair `(book, fingerprint)`. The phone declares
+  it as a unique REPLACE index — a merge emitting two rows with the same pair
+  would silently eat one.
+- **Statement import commits as ONE `mutate`** (`AppState.importBankTxns`) —
+  one save, one undo snapshot, dedup against `(book, fingerprint)` inside.
+- The Bank Book deliberately does **not** feed Wealth Vision or the Ledger —
+  same reasoning as the Cash Book: transfers between own accounts would
+  corrupt income/expense analytics. It is its own section with its own totals.
+- The imported statement file itself stays on disk, plaintext — the DONE step
+  says so and suggests deleting it. The importer never writes plaintext out.
 
 ## Browser bridge — trust model mirrors the phone
 
@@ -190,6 +233,19 @@ app**. The trust model is deliberately the phone's, translated:
   socket `0600` inside a `0700` dir in `$XDG_RUNTIME_DIR`, runs only between unlock and
   lock, and deletes the socket on stop. The password never appears in a query or a match
   — only in a `secret` reply after approval.
+- **Messages are handled on a pool, replies write-locked per connection, and
+  pending requests are QUEUES.** A browser multiplexes every tab over one
+  native port = one connection; if the reader handled inline, one unanswered
+  fill dialog would freeze all queries for the 110s timeout (it did). Keep
+  `serve()` dispatching to the pool, and never collapse
+  `pendingFills`/`pendingCaptures` back to single slots — two tabs asking at
+  once used to clobber each other's dialog.
+- **The capture WRITE runs inside `BridgeCaptureRequest.confirm()` on the UI
+  thread, never the socket worker.** `VaultStore.Session.save()` is also
+  serialised (`saveLock` + unique temp file) — two concurrent writers on the
+  old fixed `vault.meta.tmp` could interleave and publish a torn ciphertext,
+  i.e. an unlockable vault. The browser's `saved` ack is sent only after the
+  write actually happened; a vault locked mid-confirm answers `declined`.
 - **The extension identity is pinned.** `manifest.json` carries a fixed public `key`, so
   its Chromium id is deterministic (`lgijklkbehpbmjappnbkoipafgbbbbia`); the
   native-messaging manifests authorise *only* that id / the Firefox add-on id, so no

@@ -78,9 +78,11 @@ object BridgeInstaller {
             chromium("Vivaldi", cfg, "vivaldi")
             chromium("Opera", cfg, "opera")
             firefox("Firefox", File(home, ".mozilla"))
-            // Snap and Flatpak Firefox keep a private HOME.
-            firefox("Firefox (snap)", File(home, "snap/firefox/common/.mozilla"))
-            firefox("Firefox (flatpak)", File(home, ".var/app/org.mozilla.firefox/.mozilla"))
+            // Snap and Flatpak Firefox keep a private HOME — the manifest lands
+            // where they look, but their confinement usually cannot execute a
+            // host outside the sandbox, so the label must not read as a promise.
+            firefox("Firefox (snap — sandbox may block it)", File(home, "snap/firefox/common/.mozilla"))
+            firefox("Firefox (flatpak — sandbox may block it)", File(home, ".var/app/org.mozilla.firefox/.mozilla"))
         }
         return out
     }

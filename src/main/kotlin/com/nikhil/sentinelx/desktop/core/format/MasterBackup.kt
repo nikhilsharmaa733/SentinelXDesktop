@@ -35,6 +35,12 @@ data class MasterBackup(
     /** Daily cash handover / balance sheet. Added in v7; absent from v6 archives. */
     val cashBook: List<CashEntryEntity> = emptyList(),
     /**
+     * Bank transactions imported from statements. Additive like the notes-v8
+     * fields — the archive version does NOT move: an old build drops the key,
+     * a new build reads an old archive as an empty bank book.
+     */
+    val bankTxns: List<BankTxnEntity> = emptyList(),
+    /**
      * Note folders — colour, glyph, lock, passcode gate. Travels with the NOTES
      * section (a folder without its notes is a label; its notes without the folder
      * lose their lock). Absent from pre-v9 archives, in which case folders exist only
@@ -73,8 +79,9 @@ object VaultSection {
     const val CHRONICLES = "CHRONICLES"
     const val LEDGER = "LEDGER"
     const val CASHBOOK = "CASHBOOK"
+    const val BANK = "BANK"
 
-    val ALL = listOf(LOGINS, CARDS, NOTES, CHRONICLES, LEDGER, CASHBOOK)
+    val ALL = listOf(LOGINS, CARDS, NOTES, CHRONICLES, LEDGER, CASHBOOK, BANK)
 
     fun label(section: String): String = when (section) {
         LOGINS -> "Logins"
@@ -83,6 +90,7 @@ object VaultSection {
         CHRONICLES -> "Chronicles"
         LEDGER -> "Ledger & Accounts"
         CASHBOOK -> "Cash Book"
+        BANK -> "Bank Book"
         else -> section
     }
 }
@@ -101,6 +109,7 @@ fun MasterBackup.countIn(section: String): Int = when (section) {
     VaultSection.CHRONICLES -> chronicles.size
     VaultSection.LEDGER -> ledger.size + accounts.size
     VaultSection.CASHBOOK -> cashBook.size
+    VaultSection.BANK -> bankTxns.size
     else -> 0
 }
 
@@ -118,6 +127,7 @@ fun MasterBackup.scopedTo(wanted: Collection<String>): MasterBackup {
         ledger = if (VaultSection.LEDGER in keep) ledger else emptyList(),
         accounts = if (VaultSection.LEDGER in keep) accounts else emptyList(),
         cashBook = if (VaultSection.CASHBOOK in keep) cashBook else emptyList(),
+        bankTxns = if (VaultSection.BANK in keep) bankTxns else emptyList(),
         noteFolders = if (VaultSection.NOTES in keep) noteFolders else emptyList(),
         sections = if (keep.containsAll(VaultSection.ALL)) null
         else VaultSection.ALL.filter { it in keep },
@@ -596,3 +606,82 @@ fun List<CashEntryEntity>.noteInventory(): Map<Int, Int> {
     }
     return running.filterValues { it > 0 }.toSortedMap(compareByDescending { it })
 }
+
+// ── Bank book ────────────────────────────────────────────────────────────────
+
+/**
+ * One bank transaction, as imported from a statement.
+ *
+ * [narration] is the untouched original line — the labelled fields beside it
+ * ([mode], [party], [reference]…) are *extracted commentary*, chosen by the
+ * user in the import wizard, and losing one costs a label while the narration
+ * still holds the truth. The same authoritative/commentary split as the cash
+ * book's `amount`/`denominations`.
+ *
+ * [fingerprint] is the dedup identity ([StatementParse.fingerprintOf] — date,
+ * amount, direction, reference, narration, balance): re-importing an
+ * overlapping statement produces the same fingerprints and the duplicates
+ * collapse instead of doubling the book. Merge identity is `(book,
+ * fingerprint)` — the book name stays *outside* the hash so renaming a book
+ * never rewrites fingerprints. Mirrored as a Room unique index on the phone.
+ */
+data class BankTxnEntity(
+    val id: Long = 0L,
+    /** The account this statement belongs to, e.g. "HDFC ••1234". Free text — the `book` pattern. */
+    val book: String = "",
+    /** Business date, UTC midnight — the cash book's convention. */
+    val txnDate: Long = 0L,
+    /** The statement's full narration line, never trimmed down. */
+    val narration: String = "",
+    /** Positive magnitude; [direction] carries the sign. */
+    val amount: Double = 0.0,
+    /** [BankBook.DEBIT] or [BankBook.CREDIT]. */
+    val direction: String = BankBook.DEBIT,
+    /** Running balance after this transaction, when the statement had a balance column. */
+    val balance: Double? = null,
+    /** UPI / NEFT / IMPS / ATM…, extracted from the narration. */
+    val mode: String? = null,
+    /** P2M (merchant) / P2A / P2P (person). */
+    val channel: String? = null,
+    /** RRN / UTR / cheque number. */
+    val reference: String? = null,
+    /** Counterparty name. */
+    val party: String? = null,
+    /** The free-text remark the payer typed. */
+    val remark: String? = null,
+    /** Counterparty's bank, when the narration names it. */
+    val bankName: String? = null,
+    val category: String = BankBook.CAT_OTHER,
+    val fingerprint: String = "",
+    /** Imported / last-edited at. */
+    val timestamp: Long = 0L
+)
+
+/**
+ * The [BankTxnEntity] vocabulary. The direction and category strings cross the
+ * `.sxv` boundary, so constants rather than enums, as everywhere else. The
+ * canonical DEBIT/CREDIT strings live in the statement engine's `BankVocab`
+ * (the parser is the one place that decides them); these aliases keep format
+ * code reading naturally without importing across packages.
+ */
+object BankBook {
+    const val DEBIT = "DEBIT"
+    const val CREDIT = "CREDIT"
+    const val CAT_OTHER = "Other"
+}
+
+fun BankTxnEntity.isCredit(): Boolean = direction == BankBook.CREDIT
+
+/** Positive for money in, negative for money out — a plain sum gives the net. */
+fun BankTxnEntity.signedAmount(): Double = if (isCredit()) amount else -amount
+
+/** What a list row leads with: the party if one was extracted, else the narration. */
+fun BankTxnEntity.displayParty(): String =
+    party?.takeIf { it.isNotBlank() } ?: narration.take(48).ifBlank { "Transaction" }
+
+fun List<BankTxnEntity>.totalIn(): Double = filter { it.isCredit() }.sumOf { it.amount }
+fun List<BankTxnEntity>.totalOut(): Double = filterNot { it.isCredit() }.sumOf { it.amount }
+
+/** Book names present, most recently touched first. */
+fun List<BankTxnEntity>.bankBooks(): List<String> =
+    sortedByDescending { it.timestamp }.map { it.book }.filter { it.isNotBlank() }.distinct()

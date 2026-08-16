@@ -25,6 +25,7 @@ package com.nikhil.sentinelx.desktop.core.format
  * | Accounts     | `name`                                     |
  * | Ledger       | account + `title` + `amount` + `timestamp` |
  * | Cash Book    | date + slot + direction + amount + text    |
+ * | Bank Book    | `book` + `fingerprint`                     |
  *
  * Using anything else would let the merge emit a list the database then silently
  * collapses: every `@Insert` in this project is `OnConflictStrategy.REPLACE`, so a
@@ -150,6 +151,7 @@ object VaultMerge {
                 ledger = pick(carried, VaultSection.LEDGER, incoming.ledger, current.ledger),
                 accounts = pick(carried, VaultSection.LEDGER, incoming.accounts, current.accounts),
                 cashBook = pick(carried, VaultSection.CASHBOOK, incoming.cashBook, current.cashBook),
+                bankTxns = pick(carried, VaultSection.BANK, incoming.bankTxns, current.bankTxns),
                 sections = null,
                 timestamp = System.currentTimeMillis()
             ),
@@ -229,6 +231,26 @@ object VaultMerge {
             ).also { stats += it.stats }.merged
         } else current.cashBook
 
+        val bankTxns = if (VaultSection.BANK in carried) {
+            reconcile(
+                VaultSection.BANK, current.bankTxns, incoming.bankTxns, policy,
+                // The fingerprint IS the row's identity within its book — that is
+                // the whole point of computing it at import time. The book stays
+                // outside the hash so renaming one never rewrites fingerprints.
+                identity = { join(norm(it.book), it.fingerprint) },
+                fingerprint = {
+                    join(
+                        it.book, it.txnDate, it.narration, it.amount, it.direction,
+                        it.balance, it.mode, it.channel, it.reference, it.party,
+                        it.remark, it.bankName, it.category, it.fingerprint
+                    )
+                },
+                // A kept-both row marks the fingerprint itself; the narration and
+                // every user-visible field stay untouched.
+                rename = { txn, n -> txn.copy(fingerprint = mark(txn.fingerprint, n)) }
+            ).also { stats += it.stats }.merged
+        } else current.bankTxns
+
         val ledger = if (VaultSection.LEDGER in carried) {
             mergeLedger(current, incoming, policy).also { stats += it.stats }
         } else null
@@ -243,6 +265,7 @@ object VaultMerge {
                 ledger = ledger?.transactions ?: current.ledger,
                 accounts = ledger?.accounts ?: current.accounts,
                 cashBook = cashBook,
+                bankTxns = bankTxns,
                 sections = null,
                 timestamp = System.currentTimeMillis()
             ),

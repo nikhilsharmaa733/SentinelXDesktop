@@ -38,9 +38,12 @@ interface BridgeHandler {
  * only while the vault is unlocked *and* the bridge is switched on — [stop]
  * deletes the socket file.
  *
- * Threading: one acceptor thread, one reader thread per connection. Handler
- * calls (which may block on a dialog) run on the reader thread, so a slow
- * approval never stalls the acceptor or another tab's connection.
+ * Threading: one acceptor thread, one reader thread per connection — and each
+ * *message* is handled on a pool worker, because every browser multiplexes all
+ * of its tabs over ONE native-messaging port and therefore one connection. If
+ * the reader handled messages inline, a fill dialog left unanswered in one tab
+ * would block every query from every other tab for the full approval timeout.
+ * Replies are serialised per connection with a write lock.
  */
 class BridgeServer(
     private val socketPath: File,
@@ -50,6 +53,8 @@ class BridgeServer(
     private val running = AtomicBoolean(false)
     private var channel: ServerSocketChannel? = null
     private var acceptor: Thread? = null
+    private var pool: java.util.concurrent.ExecutorService? = null
+    private val connections = java.util.Collections.synchronizedSet(HashSet<SocketChannel>())
 
     val path: File get() = socketPath
 
@@ -72,6 +77,9 @@ class BridgeServer(
             Files.setPosixFilePermissions(socketPath.toPath(), PosixFilePermissions.fromString("rw-------"))
         }
 
+        pool = java.util.concurrent.Executors.newCachedThreadPool { task ->
+            Thread(task, "sentinel-bridge-work").apply { isDaemon = true }
+        }
         acceptor = Thread({ acceptLoop(server) }, "sentinel-bridge-accept").apply {
             isDaemon = true
             start()
@@ -82,22 +90,39 @@ class BridgeServer(
     private fun acceptLoop(server: ServerSocketChannel) {
         while (running.get()) {
             val conn = runCatching { server.accept() }.getOrNull() ?: break
+            connections.add(conn)
             Thread({ serve(conn) }, "sentinel-bridge-conn").apply { isDaemon = true }.start()
         }
     }
 
     private fun serve(conn: SocketChannel) {
-        conn.use {
-            val reader = LineReader(conn)
-            while (running.get()) {
-                val line = runCatching { reader.readLine() }.getOrNull() ?: break
-                if (line.isBlank()) continue
-                val reply = runCatching { handle(line) }
-                    .getOrElse { BridgeProtocol.error("", it.javaClass.simpleName) }
-                    ?: continue
-                val written = runCatching { writeLine(conn, reply); true }.getOrDefault(false)
-                if (!written) break
+        // Interleaved replies from concurrent handlers must not tear each
+        // other's lines apart; one lock per connection serialises the writes.
+        val writeLock = Any()
+        try {
+            conn.use {
+                val reader = LineReader(conn)
+                while (running.get()) {
+                    val line = runCatching { reader.readLine() }.getOrNull() ?: break
+                    if (line.isBlank()) continue
+                    val workers = pool ?: break
+                    // Handle off the reader thread: a fill blocked on its
+                    // approval dialog must not stop the next tab's query from
+                    // being read and answered.
+                    runCatching {
+                        workers.execute {
+                            val reply = runCatching { handle(line) }
+                                .getOrElse { BridgeProtocol.error("", it.javaClass.simpleName) }
+                                ?: return@execute
+                            synchronized(writeLock) {
+                                runCatching { writeLine(conn, reply) }
+                            }
+                        }
+                    }
+                }
             }
+        } finally {
+            connections.remove(conn)
         }
     }
 
@@ -144,6 +169,14 @@ class BridgeServer(
     fun stop() {
         if (!running.compareAndSet(true, false)) return
         runCatching { channel?.close() }
+        // Close live connections too, or their reader threads sit blocked in
+        // read() until the browser side goes away on its own.
+        synchronized(connections) {
+            connections.forEach { runCatching { it.close() } }
+            connections.clear()
+        }
+        pool?.shutdownNow()
+        pool = null
         runCatching { Files.deleteIfExists(socketPath.toPath()) }
         channel = null
         acceptor = null

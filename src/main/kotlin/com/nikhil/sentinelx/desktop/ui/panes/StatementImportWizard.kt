@@ -153,7 +153,13 @@ fun StatementImportWizard(state: AppState, defaultBook: String?, onClose: () -> 
         if (book.isBlank()) outcome?.suggestedBook?.let { book = it }
     }
 
-    Dialog(onDismissRequest = { if (!reading) onClose() }) {
+    // usePlatformDefaultWidth = false is load-bearing: the default coerces the
+    // dialog down to the platform's narrow dialog width, the footer row then
+    // overflows horizontally, and the NEXT button gets clipped off the edge.
+    Dialog(
+        onDismissRequest = { if (!reading) onClose() },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Column(
             Modifier
                 .width(880.dp)
@@ -403,7 +409,13 @@ private fun MappingStep(
         grid.rows.drop(start).filter { row -> row.any { it.isNotBlank() } }.take(6)
     }
 
+    // The step scaffold every tall step uses: content in a weighted scroll area,
+    // footer pinned below it. Without the weight, tall content eats the dialog's
+    // height budget and pushes BACK/NEXT past the clipped max height.
     Column(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+        ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
@@ -499,15 +511,20 @@ private fun MappingStep(
             }
         }
 
+        }
+
         Spacer(Modifier.height(14.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // weight on the TEXT, not a spacer: a long status line must wrap
+            // rather than shove the buttons off the right edge.
             Text(
                 if (parsedCount > 0) "$parsedCount transactions recognised"
                 else "No transactions recognised yet — check the Date and amount columns",
                 color = if (parsedCount > 0) IncomeGreen else AmberWarn,
-                fontSize = 11.sp, fontWeight = FontWeight.Bold
+                fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(12.dp))
             BackButton(onBack)
             Spacer(Modifier.width(8.dp))
             WizardButton("NEXT", enabled = parsedCount > 0, onClick = onNext)
@@ -559,7 +576,12 @@ private fun FieldsStep(
     onBack: () -> Unit,
     onNext: () -> Unit
 ) {
+    // Same pinned-footer scaffold as MappingStep: the toggles plus preview can
+    // outgrow the dialog, and NEXT must survive that.
     Column(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+        ) {
         Text(
             "The narration packs several facts into one line. Pick which ones to pull out " +
                 "into their own fields — the full line is always kept either way.",
@@ -594,7 +616,8 @@ private fun FieldsStep(
 
             Spacer(Modifier.width(18.dp))
 
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            // No scroll of its own — the whole step body scrolls as one.
+            Column(Modifier.weight(1f)) {
                 Text(
                     "LIVE PREVIEW",
                     color = GoldTarnished, fontSize = 8.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold
@@ -625,6 +648,8 @@ private fun FieldsStep(
                     }
                 }
             }
+        }
+
         }
 
         Spacer(Modifier.height(12.dp))

@@ -167,6 +167,8 @@ fun BankPane(state: AppState) {
                         MonthPicker(months, month) { month = it }
                         Spacer(Modifier.width(10.dp))
                         DirectionChips(direction) { direction = it }
+                        Spacer(Modifier.width(10.dp))
+                        RowStyleMenu(state)
                     }
                     Spacer(Modifier.height(8.dp))
                     CategoryStrip(filtered)
@@ -180,7 +182,11 @@ fun BankPane(state: AppState) {
                         TxnColumnsHeader()
                         LazyColumn(Modifier.weight(1f)) {
                             items(filtered, key = { it.id }) { txn ->
-                                TxnRow(txn) { state.panels.open(PanelRequest.BankTxn(txn)) }
+                                TxnRow(
+                                    txn,
+                                    primaryPref = state.bankRowPrimary,
+                                    secondaryPref = state.bankRowSecondary
+                                ) { state.panels.open(PanelRequest.BankTxn(txn)) }
                             }
                             item { Spacer(Modifier.height(20.dp)) }
                         }
@@ -477,6 +483,113 @@ private fun CategoryStrip(txns: List<BankTxnEntity>) {
     }
 }
 
+// ── Row display preference ───────────────────────────────────────────────────
+// The user picks what a row leads with (big text) and what it highlights on the
+// second line — a payee-first book and a remark-first book are both legitimate
+// ways to read a statement, and only its owner knows which.
+
+private val PRIMARY_CHOICES = listOf(
+    "PAYEE" to "Payee name",
+    "REMARK" to "Remark",
+    "NARRATION" to "Narration"
+)
+private val SECONDARY_CHOICES = listOf(
+    "REMARK" to "Remark",
+    "PAYEE" to "Payee name",
+    "NARRATION" to "Narration",
+    "REFERENCE" to "Reference no.",
+    "NONE" to "Nothing"
+)
+
+private fun BankTxnEntity.cleanRemark(): String? =
+    remark?.takeIf { it.isNotBlank() && !it.equals("NO REM", true) && !it.equals("NOREM", true) }
+
+private fun BankTxnEntity.flatNarration(): String = narration.replace('\n', ' ')
+
+/** The big text, with honest fallbacks so a row never leads with a blank. */
+private fun BankTxnEntity.rowPrimary(pref: String): String = when (pref) {
+    "REMARK" -> cleanRemark() ?: displayParty()
+    "NARRATION" -> flatNarration().ifBlank { displayParty() }
+    else -> displayParty()
+}
+
+/** The second line: text + whether it wears the gold highlight. Null = no line. */
+private fun BankTxnEntity.rowSecondary(pref: String, primaryShown: String): Pair<String, Boolean>? {
+    val text = when (pref) {
+        "NONE" -> null
+        "PAYEE" -> party
+        "NARRATION" -> flatNarration()
+        "REFERENCE" -> reference
+        else -> cleanRemark() ?: flatNarration()   // REMARK, narration as fallback
+    }?.takeIf { it.isNotBlank() && it.trim() != primaryShown.trim() } ?: return null
+    val highlighted = when (pref) {
+        "PAYEE" -> true
+        "REMARK" -> cleanRemark() != null          // the muted fallback is narration
+        else -> false
+    }
+    return text to highlighted
+}
+
+@Composable
+private fun RowStyleMenu(state: AppState) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(SurfaceStone)
+                .border(1.dp, GoldDark.copy(0.25f), RoundedCornerShape(10.dp))
+                .clickable { open = true }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "VIEW", color = TextSubtle, fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("▾", color = TextMuted, fontSize = 9.sp)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Text(
+                "BIG TEXT", color = GoldTarnished, fontSize = 9.sp,
+                letterSpacing = 2.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+            )
+            PRIMARY_CHOICES.forEach { (key, label) ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            (if (state.bankRowPrimary == key) "✓  " else "    ") + label,
+                            fontSize = 12.sp,
+                            color = if (state.bankRowPrimary == key) GoldIce else TextParchment
+                        )
+                    },
+                    onClick = { state.setBankRowStyle(key, state.bankRowSecondary) }
+                )
+            }
+            HorizontalDivider(color = GoldDark.copy(0.2f))
+            Text(
+                "HIGHLIGHTED BELOW", color = GoldTarnished, fontSize = 9.sp,
+                letterSpacing = 2.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+            )
+            SECONDARY_CHOICES.forEach { (key, label) ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            (if (state.bankRowSecondary == key) "✓  " else "    ") + label,
+                            fontSize = 12.sp,
+                            color = if (state.bankRowSecondary == key) GoldIce else TextParchment
+                        )
+                    },
+                    onClick = { state.setBankRowStyle(state.bankRowPrimary, key) }
+                )
+            }
+        }
+    }
+}
+
 // Fixed column widths shared by the header and every row, so they line up as
 // real columns — the classic passbook layout: Date · Particulars · Debit ·
 // Credit · Balance.
@@ -505,8 +618,15 @@ private fun TxnColumnsHeader() {
 }
 
 @Composable
-private fun TxnRow(txn: BankTxnEntity, onClick: () -> Unit) {
+private fun TxnRow(
+    txn: BankTxnEntity,
+    primaryPref: String,
+    secondaryPref: String,
+    onClick: () -> Unit
+) {
     val date = businessDateOf(txn.txnDate)
+    val primary = txn.rowPrimary(primaryPref)
+    val secondary = txn.rowSecondary(secondaryPref, primary)
     Row(
         Modifier
             .fillMaxWidth()
@@ -525,7 +645,7 @@ private fun TxnRow(txn: BankTxnEntity, onClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    txn.displayParty(),
+                    primary.take(70),
                     color = TextParchment, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1,
                     modifier = Modifier.weight(1f, fill = false)
                 )
@@ -538,28 +658,21 @@ private fun TxnRow(txn: BankTxnEntity, onClick: () -> Unit) {
                     Pill("SHOP", GoldTarnished)
                 }
             }
+            // Always rendered — it carries the category pill even when the
+            // user chose "Nothing" for the highlighted line.
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // The remark is what the user themselves typed with the payment
-                // — first-class information, highlighted beside the name, never
-                // buried in the muted narration grey.
-                val remark = txn.remark?.takeIf {
-                    it.isNotBlank() && !it.equals("NO REM", true) && !it.equals("NOREM", true)
-                }
-                if (remark != null) {
+                val (text, highlighted) = secondary ?: ("" to false)
+                if (text.isNotEmpty()) {
                     Text(
-                        "❝ ${remark.take(60)}",
-                        color = GoldIce, fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                        if (highlighted) "❝ ${text.take(60)}" else text.take(80),
+                        color = if (highlighted) GoldIce else TextMuted,
+                        fontSize = 10.sp,
+                        fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1, modifier = Modifier.weight(1f, fill = false)
                     )
-                } else {
-                    Text(
-                        txn.narration.replace('\n', ' ').take(80),
-                        color = TextMuted, fontSize = 10.sp, maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
+                    Spacer(Modifier.width(8.dp))
                 }
-                Spacer(Modifier.width(8.dp))
                 Pill(txn.category.uppercase(), accentFor(txn.category))
             }
         }

@@ -123,6 +123,7 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         session = store.unlock(password).also { backup = it.load() }
         loadFavourites()
         loadBridgePreference()
+        loadBankViewPreference()
         locked = false
         bridge.onUnlocked()
         true
@@ -484,6 +485,35 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
             b.copy(bankTxns = b.bankTxns.map {
                 if (it.book.equals(oldName, ignoreCase = true)) it.copy(book = trimmed) else it
             })
+        }
+    }
+
+    // ── Bank row display preference ───────────────────────────────────────
+    // What the transaction row leads with (big text) and what it highlights
+    // beneath. A sidecar preference like favourites — display taste, not vault
+    // data, so it never enters MasterBackup.
+
+    var bankRowPrimary by mutableStateOf("PAYEE")
+        private set
+    var bankRowSecondary by mutableStateOf("REMARK")
+        private set
+
+    fun setBankRowStyle(primary: String, secondary: String) {
+        bankRowPrimary = primary
+        bankRowSecondary = secondary
+        runCatching {
+            session?.writeSidecar("bankview", "$primary|$secondary".toByteArray(Charsets.UTF_8))
+        }
+    }
+
+    internal fun loadBankViewPreference() {
+        runCatching {
+            session?.readSidecar("bankview")?.toString(Charsets.UTF_8)?.split('|')
+        }.getOrNull()?.let { parts ->
+            if (parts.size == 2 && parts.all { it.isNotBlank() }) {
+                bankRowPrimary = parts[0]
+                bankRowSecondary = parts[1]
+            }
         }
     }
 

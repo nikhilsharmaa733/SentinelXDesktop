@@ -93,6 +93,19 @@ tasks.register<JavaExec>("verifySxv") {
 }
 
 /**
+ * Probes a real bank statement through the import engine without importing:
+ * format, detected bank, header mapping, parse outcome, balance verification.
+ *
+ *   ./gradlew verifyStatement --args="/path/to/statement.xls" -q
+ */
+tasks.register<JavaExec>("verifyStatement") {
+    group = "verification"
+    description = "Parse a real bank statement and report what the engine saw"
+    mainClass.set("com.nikhil.sentinelx.desktop.tools.VerifyStatementKt")
+    classpath = sourceSets["main"].runtimeClasspath
+}
+
+/**
  * Produces a genuinely runnable uber jar.
  *
  * Bouncy Castle ships a **signed** jar. Merging it into an uber jar carries its

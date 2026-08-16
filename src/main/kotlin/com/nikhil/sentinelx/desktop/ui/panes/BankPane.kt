@@ -67,6 +67,9 @@ fun BankPane(state: AppState) {
     var direction by remember { mutableStateOf<String?>(null) }  // null · "C" · "D"
     var renamingBook by remember { mutableStateOf<String?>(null) }
     var deletingBook by remember { mutableStateOf<String?>(null) }
+    var selectMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var confirmBulkDelete by remember { mutableStateOf(false) }
 
     val books = remember(all) { all.bankBooks() }
     // A deleted or renamed book must not leave a stale filter behind.
@@ -169,6 +172,38 @@ fun BankPane(state: AppState) {
                         DirectionChips(direction) { direction = it }
                         Spacer(Modifier.width(10.dp))
                         RowStyleMenu(state)
+                        Spacer(Modifier.width(10.dp))
+                        FilterChip2("SELECT", selectMode, AmberWarn) {
+                            selectMode = !selectMode
+                            if (!selectMode) selectedIds = emptySet()
+                        }
+                    }
+
+                    // ── Selection bar ────────────────────────────────────────
+                    if (selectMode) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(AmberWarn.copy(0.08f))
+                                .border(1.dp, AmberWarn.copy(0.3f), RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${selectedIds.size} SELECTED",
+                                color = AmberWarn, fontSize = 10.sp,
+                                fontWeight = FontWeight.Black, letterSpacing = 1.sp
+                            )
+                            Spacer(Modifier.weight(1f))
+                            RailAction("SELECT ALL") { selectedIds = filtered.map { it.id }.toSet() }
+                            Spacer(Modifier.width(10.dp))
+                            RailAction("CLEAR") { selectedIds = emptySet() }
+                            Spacer(Modifier.width(10.dp))
+                            RailAction("DELETE ${selectedIds.size}", ExpenseRed) {
+                                if (selectedIds.isNotEmpty()) confirmBulkDelete = true
+                            }
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     CategoryStrip(filtered)
@@ -185,8 +220,18 @@ fun BankPane(state: AppState) {
                                 TxnRow(
                                     txn,
                                     primaryPref = state.bankRowPrimary,
-                                    secondaryPref = state.bankRowSecondary
-                                ) { state.panels.open(PanelRequest.BankTxn(txn)) }
+                                    secondaryPref = state.bankRowSecondary,
+                                    selectMode = selectMode,
+                                    selected = txn.id in selectedIds
+                                ) {
+                                    if (selectMode) {
+                                        selectedIds =
+                                            if (txn.id in selectedIds) selectedIds - txn.id
+                                            else selectedIds + txn.id
+                                    } else {
+                                        state.panels.open(PanelRequest.BankTxn(txn))
+                                    }
+                                }
                             }
                             item { Spacer(Modifier.height(20.dp)) }
                         }
@@ -215,6 +260,35 @@ fun BankPane(state: AppState) {
                 deletingBook = null
             },
             onDismiss = { deletingBook = null }
+        )
+    }
+    if (confirmBulkDelete) {
+        ConfirmDelete(
+            itemName = "${selectedIds.size} selected transaction${if (selectedIds.size == 1) "" else "s"}",
+            onConfirm = {
+                state.deleteBankTxns(selectedIds)
+                selectedIds = emptySet()
+                selectMode = false
+                confirmBulkDelete = false
+            },
+            onDismiss = { confirmBulkDelete = false }
+        )
+    }
+}
+
+@Composable
+private fun FilterChip2(label: String, active: Boolean, tint: Color, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) tint.copy(0.16f) else SurfaceStone)
+            .border(1.dp, if (active) tint.copy(0.5f) else GoldDark.copy(0.25f), RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 9.dp)
+    ) {
+        Text(
+            label, color = if (active) tint else TextSubtle,
+            fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
         )
     }
 }
@@ -622,6 +696,8 @@ private fun TxnRow(
     txn: BankTxnEntity,
     primaryPref: String,
     secondaryPref: String,
+    selectMode: Boolean = false,
+    selected: Boolean = false,
     onClick: () -> Unit
 ) {
     val date = businessDateOf(txn.txnDate)
@@ -632,11 +708,22 @@ private fun TxnRow(
             .fillMaxWidth()
             .padding(vertical = 2.dp)
             .clip(RoundedCornerShape(12.dp))
-            .rowSurface(false)
+            .rowSurface(selected)
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (selectMode) {
+            Box(
+                Modifier.size(16.dp).clip(RoundedCornerShape(5.dp))
+                    .background(if (selected) AmberWarn else SurfaceElevated)
+                    .border(1.dp, if (selected) AmberWarn else GoldDark.copy(0.35f), RoundedCornerShape(5.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (selected) Text("✓", color = BackgroundDeep, fontSize = 10.sp, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(10.dp))
+        }
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(46.dp)) {
             Text(date.format(rowDate).uppercase(), color = TextSubtle, fontSize = 9.sp, fontWeight = FontWeight.Bold)
             Text(date.format(rowYear), color = TextMuted, fontSize = 8.sp)

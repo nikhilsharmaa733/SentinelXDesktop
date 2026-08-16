@@ -40,7 +40,7 @@ object StatementReader {
                     val text = decodeText(bytes)
                     if (looksLikeHtml(text)) HtmlTable.read(text) else CsvTable.read(text)
                 }
-            }
+            }.copy(fileName = fileName)
         } catch (e: StatementPasswordRequired) {
             throw e
         } catch (e: StatementReadException) {

@@ -30,7 +30,14 @@ data class StatementGrid(
     /** Human-readable source format, e.g. "XLSX", "PDF (decrypted)". */
     val format: String,
     /** Non-fatal oddities worth surfacing in the import wizard. */
-    val warnings: List<String> = emptyList()
+    val warnings: List<String> = emptyList(),
+    /**
+     * The file's own name, stamped by the dispatcher. Banks name their exports
+     * distinctively ("AcctStatement_…", "IDFCFIRSTBankstatement_…"), which is
+     * often a stronger issuer signal than the sheet text — a letterhead can be
+     * a logo image the readers never see.
+     */
+    val fileName: String = ""
 )
 
 /** The file could not be read at all — wrong format, truncated, unsupported. */

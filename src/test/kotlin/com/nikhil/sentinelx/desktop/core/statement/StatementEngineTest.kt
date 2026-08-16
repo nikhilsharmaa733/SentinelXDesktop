@@ -648,6 +648,111 @@ class StatementEngineTest {
         assertEquals(500.0, outcome.rows[0].amount)
     }
 
+    // ── Real-world bank shapes ───────────────────────────────────────────────
+    // Synthetic fixtures modelled on genuine exports (verified against real
+    // files via `./gradlew verifyStatement`): structure is theirs, data is not.
+
+    @Test
+    fun `axis shape - bare DR CR BAL headers map and constant SOL is ignored`() {
+        // Axis .xls: SRL NO | Tran Date | CHQNO | PARTICULARS | DR | CR | BAL | SOL.
+        // SOL is a constant branch code; it was once crowned the running balance.
+        val csv = """
+            Statement of Account,,,,,,,
+            Account No : XXXXXX1234,,,,,,,
+            SRL NO,Tran Date,CHQNO,PARTICULARS,DR,CR,BAL,SOL
+            1,01-02-2026,,UPI/P2M/062615114601/SOME SHOP/NO REM/BANK,15.00,,12681.40,763
+            2,01-02-2026,,UPI/P2A/062615114602/SOME ONE/UPI/BANK,,50.00,12731.40,763
+            3,02-02-2026,,ATM WDL 1234,500.00,,12231.40,763
+        """.trimIndent()
+        val grid = StatementReader.read(csv.toByteArray(), "AcctStatement_XXX1234_01022026.csv")
+
+        assertEquals("Axis Bank", StatementParse.detectBank(grid)?.label)
+
+        val mapping = StatementParse.detectMapping(grid)
+        assertEquals(StatementParse.Col.IGNORE, mapping.columns[0])   // SRL NO
+        assertEquals(StatementParse.Col.DATE, mapping.columns[1])
+        assertEquals(StatementParse.Col.DEBIT, mapping.columns[4])
+        assertEquals(StatementParse.Col.CREDIT, mapping.columns[5])
+        assertEquals(StatementParse.Col.BALANCE, mapping.columns[6])  // BAL, not SOL
+        assertEquals(StatementParse.Col.IGNORE, mapping.columns[7])   // SOL
+
+        val outcome = StatementParse.parse(grid, mapping, StatementParse.Extraction())
+        assertEquals(3, outcome.rows.size)
+        assertEquals(12681.40, outcome.rows[0].balance)
+        assertEquals(false, outcome.rows[0].isCredit)
+        assertEquals(true, outcome.rows[1].isCredit)
+        assertTrue(outcome.rows.drop(1).all { it.balanceAgrees == true })
+    }
+
+    @Test
+    fun `bank detection reads the letterhead not the narrations`() {
+        // The counterparty's bank in a narration must not win over the issuer.
+        val csv = """
+            AXIS BANK LTD - Statement,,,,
+            Date,Narration,Debit,Credit,Balance
+            01/08/2026,UPI/P2M/1/SHOP/NO REM/YES BANK LIMITED YBS,10.00,,90.00
+        """.trimIndent()
+        val grid = StatementReader.read(csv.toByteArray(), "statement.csv")
+        assertEquals("Axis Bank", StatementParse.detectBank(grid)?.label)
+    }
+
+    @Test
+    fun `idfc shape - filename detection and named-month dates are unambiguous`() {
+        val csv = """
+            Customer Statement,,,,,,
+            Transaction Date,Value Date,Particulars,Cheque No.,Debit,Credit,Balance
+            02-Apr-2026,02-Apr-2026,UPI/CR/610758747407/SOMEONE/HDFC/12345/Payment,,,"2,000.00","4,073.55"
+            03-Apr-2026,03-Apr-2026,UPI/DR/210659628152/OTHER/YESB/paytmqr/Person,,80.00,,"3,993.55"
+        """.trimIndent()
+        val grid = StatementReader.read(
+            csv.toByteArray(), "IDFCFIRSTBankstatement_1234567_890.csv"
+        )
+        assertEquals("IDFC FIRST Bank", StatementParse.detectBank(grid)?.label)
+
+        val mapping = StatementParse.detectMapping(grid)
+        assertEquals(false, mapping.ambiguousDateOrder)  // named months can't be misread
+        assertEquals(StatementParse.Col.VALUE_DATE, mapping.columns[1])
+
+        val outcome = StatementParse.parse(grid, mapping, StatementParse.Extraction())
+        assertEquals(2, outcome.rows.size)
+        assertEquals("2026-04-02", outcome.rows[0].dateIso)
+        assertEquals(true, outcome.rows[0].isCredit)
+        assertEquals(true, outcome.rows[1].balanceAgrees)
+    }
+
+    @Test
+    fun `footer line does not glue onto the last narration`() {
+        val csv = """
+            Date,Narration,Debit,Credit,Balance
+            01/08/2026,REAL TRANSACTION,10.00,,90.00
+            ,End of the statement,,,
+        """.trimIndent()
+        val grid = StatementReader.read(csv.toByteArray(), "s.csv")
+        val outcome = StatementParse.parse(grid, StatementParse.detectMapping(grid), StatementParse.Extraction())
+        assertEquals(1, outcome.rows.size)
+        assertEquals("REAL TRANSACTION", outcome.rows[0].narration)
+    }
+
+    @Test
+    fun `headerless inference never crowns a constant column as balance`() {
+        // No recognisable header: content inference must skip the constant
+        // branch-code column when choosing the running balance.
+        val rows = StringBuilder("Some preamble line,,,\n")
+        var balance = 10000.0
+        for (day in 10..18) {
+            balance -= 100.0
+            rows.append("$day/08/2026,PAYMENT NUMBER $day,100.00,${"%.2f".format(balance)},763\n")
+        }
+        val grid = StatementReader.read(rows.toString().toByteArray(), "noheader.csv")
+        val mapping = StatementParse.detectMapping(grid)
+        assertEquals(-1, mapping.headerRow)
+        val outcome = StatementParse.parse(grid, mapping, StatementParse.Extraction())
+        assertTrue(outcome.rows.isNotEmpty())
+        // Balance came from the wandering column, not the constant 763.
+        assertTrue(outcome.rows.all { it.balance != 763.0 })
+        assertTrue(outcome.rows.count { it.balanceAgrees == true } >= outcome.rows.size - 1)
+    }
+
     // ── Dispatcher ───────────────────────────────────────────────────────────
 
     @Test

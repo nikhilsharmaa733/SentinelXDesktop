@@ -119,6 +119,25 @@ private fun WizardSurface(
     var excluded by remember { mutableStateOf<Set<String>>(emptySet()) }
     var report by remember { mutableStateOf<Triple<Int, Int, Int>?>(null) }
 
+    // Which bank's rules read this file: null = whatever detectBank found,
+    // "GENERIC" = force the generic rules, else a preset id the user chose.
+    var bankId by remember { mutableStateOf<String?>(null) }
+    var detectedBank by remember { mutableStateOf<StatementParse.BankPreset?>(null) }
+
+    fun activePreset(): StatementParse.BankPreset? = when (bankId) {
+        null -> detectedBank
+        "GENERIC" -> null
+        else -> StatementParse.presetById(bankId)
+    }
+
+    fun applyMapping(g: StatementGrid) {
+        val mapping = StatementParse.detectMapping(g, activePreset())
+        columns = mapping.columns
+        headerRow = mapping.headerRow
+        dayFirst = mapping.dayFirst
+        ambiguousDates = mapping.ambiguousDateOrder
+    }
+
     fun parseFile(bytes: ByteArray, name: String, pw: String?) {
         reading = true
         error = null
@@ -131,11 +150,9 @@ private fun WizardSurface(
                 onSuccess = { g ->
                     grid = g
                     needsPassword = false
-                    val mapping = StatementParse.detectMapping(g)
-                    columns = mapping.columns
-                    headerRow = mapping.headerRow
-                    dayFirst = mapping.dayFirst
-                    ambiguousDates = mapping.ambiguousDateOrder
+                    bankId = null
+                    detectedBank = StatementParse.detectBank(g)
+                    applyMapping(g)
                     step = 1
                 },
                 onFailure = { e ->
@@ -314,6 +331,15 @@ private fun WizardSurface(
                     ambiguousDates = ambiguousDates,
                     dayFirst = dayFirst,
                     onDayFirst = { dayFirst = it },
+                    bankLabel = when (bankId) {
+                        null -> detectedBank?.let { "${it.label} (detected)" } ?: "Generic"
+                        "GENERIC" -> "Generic"
+                        else -> StatementParse.presetById(bankId)?.label ?: "Generic"
+                    },
+                    onSelectBank = { chosen ->
+                        bankId = chosen
+                        grid?.let { applyMapping(it) }
+                    },
                     parsedCount = outcome?.rows?.size ?: 0,
                     onBack = { step = 0 },
                     onNext = { step = 2 }
@@ -523,6 +549,8 @@ private fun MappingStep(
     ambiguousDates: Boolean,
     dayFirst: Boolean,
     onDayFirst: (Boolean) -> Unit,
+    bankLabel: String,
+    onSelectBank: (String?) -> Unit,
     parsedCount: Int,
     onBack: () -> Unit,
     onNext: () -> Unit
@@ -586,14 +614,16 @@ private fun MappingStep(
                     }
                 }
             }
-            if (ambiguousDates) {
-                Spacer(Modifier.width(18.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        "DATE ORDER",
-                        color = AmberWarn, fontSize = 8.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(5.dp))
+            Spacer(Modifier.width(18.dp))
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "BANK",
+                    color = CyanGlow, fontSize = 8.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(5.dp))
+                BankPicker(bankLabel, onSelectBank)
+                if (ambiguousDates) {
+                    Spacer(Modifier.height(8.dp))
                     Row {
                         ToggleChip("DD/MM", dayFirst) { onDayFirst(true) }
                         Spacer(Modifier.width(6.dp))
@@ -656,6 +686,47 @@ private fun MappingStep(
             BackButton(onBack)
             Spacer(Modifier.width(8.dp))
             WizardButton("NEXT", enabled = parsedCount > 0, onClick = onNext)
+        }
+    }
+}
+
+/**
+ * The bank whose rules read this file — auto-detected from the filename and
+ * letterhead, overridable when a bank ships a format we have not met.
+ */
+@Composable
+private fun BankPicker(label: String, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(SurfaceStone)
+                .border(1.dp, CyanGlow.copy(0.35f), RoundedCornerShape(10.dp))
+                .clickable { open = true }
+                .padding(horizontal = 11.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, color = CyanGlow, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Spacer(Modifier.width(6.dp))
+            Text("▾", color = TextMuted, fontSize = 9.sp)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text("Auto-detect", fontSize = 12.sp) },
+                onClick = { onSelect(null); open = false }
+            )
+            DropdownMenuItem(
+                text = { Text("Generic (no bank rules)", fontSize = 12.sp) },
+                onClick = { onSelect("GENERIC"); open = false }
+            )
+            HorizontalDivider(color = GoldDark.copy(0.2f))
+            StatementParse.BANK_PRESETS.forEach { preset ->
+                DropdownMenuItem(
+                    text = { Text(preset.label, fontSize = 12.sp) },
+                    onClick = { onSelect(preset.id); open = false }
+                )
+            }
         }
     }
 }

@@ -468,6 +468,13 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
 
     fun deleteBankTxn(id: Long) = mutate { b -> b.copy(bankTxns = b.bankTxns.filterNot { it.id == id }) }
 
+    /** Bulk delete as ONE mutation — one save, one undo snapshot. */
+    fun deleteBankTxns(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        val doomed = ids.toSet()
+        mutate { b -> b.copy(bankTxns = b.bankTxns.filterNot { it.id in doomed }) }
+    }
+
     /** Deletes a whole statement book and every transaction in it. */
     fun deleteBankBook(book: String) = mutate { b ->
         b.copy(bankTxns = b.bankTxns.filterNot { it.book.equals(book, ignoreCase = true) })

@@ -112,6 +112,118 @@ object StatementParse {
         val suggestedBook: String?
     )
 
+    // ── Bank presets ─────────────────────────────────────────────────────────
+
+    /**
+     * Per-bank knowledge: how to recognise the issuer from the statement's own
+     * letterhead, and what its header cells mean where the generic classifier
+     * cannot tell. The classic case is Axis, whose export heads its columns
+     * `DR / CR / BAL / SOL` — bare tokens the generic rules once read as
+     * nothing at all, upon which content inference crowned the constant SOL
+     * branch code as the running balance.
+     */
+    data class BankPreset(
+        val id: String,
+        val label: String,
+        /** Uppercase markers searched for in the statement's own text. */
+        val markers: List<String>,
+        /** Normalised header cell → meaning; consulted before the generic rules. */
+        val headerMap: Map<String, Col> = emptyMap(),
+        /** Extra uppercase markers matched against the stripped filename. */
+        val fileMarkers: List<String> = emptyList()
+    )
+
+    val BANK_PRESETS: List<BankPreset> = listOf(
+        BankPreset(
+            "AXIS", "Axis Bank", listOf("AXIS BANK"),
+            fileMarkers = listOf("ACCTSTATEMENT"),
+            headerMap = mapOf(
+                "tran date" to Col.DATE,
+                "chq no" to Col.REFERENCE,
+                "chqno" to Col.REFERENCE,
+                "particulars" to Col.NARRATION,
+                "dr" to Col.DEBIT,
+                "cr" to Col.CREDIT,
+                "dr cr" to Col.DRCR,
+                "amount inr" to Col.AMOUNT,
+                "bal" to Col.BALANCE,
+                "balance inr" to Col.BALANCE,
+                "sol" to Col.IGNORE,
+                "init br" to Col.IGNORE
+            )
+        ),
+        BankPreset(
+            "IDFC", "IDFC FIRST Bank", listOf("IDFC FIRST", "IDFC BANK"),
+            fileMarkers = listOf("IDFCFIRST"),
+            headerMap = mapOf(
+                "transaction details" to Col.NARRATION,
+                "withdrawals" to Col.DEBIT,
+                "deposits" to Col.CREDIT
+            )
+        ),
+        BankPreset("HDFC", "HDFC Bank", listOf("HDFC BANK")),
+        BankPreset("ICICI", "ICICI Bank", listOf("ICICI BANK")),
+        BankPreset("SBI", "State Bank of India", listOf("STATE BANK OF INDIA")),
+        BankPreset("KOTAK", "Kotak Mahindra Bank", listOf("KOTAK MAHINDRA")),
+        BankPreset("YESB", "YES Bank", listOf("YES BANK")),
+        BankPreset("PNB", "Punjab National Bank", listOf("PUNJAB NATIONAL")),
+        BankPreset("BOB", "Bank of Baroda", listOf("BANK OF BARODA")),
+        BankPreset("CANARA", "Canara Bank", listOf("CANARA BANK")),
+        BankPreset("UNION", "Union Bank", listOf("UNION BANK OF INDIA")),
+        BankPreset("IDBI", "IDBI Bank", listOf("IDBI BANK")),
+        BankPreset("INDUSIND", "IndusInd Bank", listOf("INDUSIND")),
+        BankPreset("FEDERAL", "Federal Bank", listOf("FEDERAL BANK")),
+        BankPreset("AU", "AU Small Finance Bank", listOf("AU SMALL FINANCE")),
+        BankPreset("PAYTM", "Paytm Payments Bank", listOf("PAYTM PAYMENTS"))
+    )
+
+    fun presetById(id: String?): BankPreset? = BANK_PRESETS.firstOrNull { it.id == id }
+
+    /**
+     * Which bank wrote this file.
+     *
+     * The filename is checked first — banks name their exports distinctively,
+     * and a letterhead that is a logo image never reaches the grid at all.
+     * The text scan is then confined to the preamble ABOVE the header row:
+     * scanning transaction rows once misdetected an Axis statement as
+     * "YES Bank" because a narration named the counterparty's bank.
+     */
+    fun detectBank(grid: StatementGrid): BankPreset? {
+        val fname = grid.fileName.uppercase().replace(Regex("[^A-Z0-9]"), "")
+        if (fname.isNotEmpty()) {
+            BANK_PRESETS.firstOrNull { preset ->
+                (preset.fileMarkers + preset.markers.map { it.replace(" ", "") })
+                    .any { it.isNotBlank() && it in fname }
+            }?.let { return it }
+        }
+
+        // Find the header row with the generic rules alone, then read only
+        // what sits above it — the issuer's own letterhead.
+        var headerRow = -1
+        val limit = minOf(grid.rows.size, 45)
+        for (i in 0 until limit) {
+            val mapped = grid.rows[i].map { classifyHeader(it) }
+            if (mapped.count { it != null } >= 3 &&
+                mapped.any { it == Col.DATE || it == Col.VALUE_DATE } &&
+                mapped.any { it == Col.DEBIT || it == Col.CREDIT || it == Col.AMOUNT }
+            ) {
+                headerRow = i
+                break
+            }
+        }
+        val preambleRows = if (headerRow > 0) headerRow else minOf(grid.rows.size, 15)
+        val text = grid.rows.take(preambleRows)
+            .joinToString("\n") { row -> row.joinToString(" ") }
+            .uppercase()
+        return BANK_PRESETS
+            .mapNotNull { preset ->
+                val at = preset.markers.mapNotNull { m -> text.indexOf(m).takeIf { it >= 0 } }.minOrNull()
+                at?.let { preset to it }
+            }
+            .minByOrNull { it.second }
+            ?.first
+    }
+
     // ── Header detection ─────────────────────────────────────────────────────
 
     private fun normalise(cell: String): String =
@@ -125,11 +237,15 @@ object StatementParse {
         return when {
             ("dr" in tokens && "cr" in tokens) || ("debit" in tokens && "credit" in tokens) ||
                 h == "type" || h == "txn type" || h == "transaction type" -> Col.DRCR
+            // Serial numbers and branch codes: recognised so the header row
+            // still scores, then dropped so content inference can't adopt them.
+            h == "sol" || h == "sol id" || h == "init br" || h == "branch" || h == "branch code" ||
+                h == "sl no" || h == "sr no" || h == "s no" || h == "sno" || h == "srl no" -> Col.IGNORE
             "balance" in tokens || "bal" in tokens -> Col.BALANCE
             "debit" in tokens || "withdrawal" in tokens || "withdrawals" in tokens ||
-                "wdl" in tokens || ("paid" in tokens && "out" in tokens) -> Col.DEBIT
+                "wdl" in tokens || "dr" in tokens || ("paid" in tokens && "out" in tokens) -> Col.DEBIT
             "credit" in tokens || "deposit" in tokens || "deposits" in tokens ||
-                ("paid" in tokens && "in" in tokens) -> Col.CREDIT
+                "cr" in tokens || ("paid" in tokens && "in" in tokens) -> Col.CREDIT
             "amount" in tokens || "amt" in tokens -> Col.AMOUNT
             "value" in tokens && "date" in tokens -> Col.VALUE_DATE
             "date" in tokens -> Col.DATE
@@ -137,22 +253,26 @@ object StatementParse {
                 "particulars" in tokens || "details" in tokens || "remarks" in tokens ||
                 "remark" in tokens -> Col.NARRATION
             "ref" in tokens || "reference" in tokens || "cheque" in tokens || "chq" in tokens ||
-                "utr" in tokens || "rrn" in tokens || "instrument" in tokens -> Col.REFERENCE
+                "chqno" in tokens || "utr" in tokens || "rrn" in tokens || "instrument" in tokens -> Col.REFERENCE
             else -> null
         }
     }
+
+    /** Preset knowledge first, generic rules second. */
+    private fun classifyWith(preset: BankPreset?, cell: String): Col? =
+        preset?.headerMap?.get(normalise(cell)) ?: classifyHeader(cell)
 
     /** How header-like a row is. PdfTable uses this to anchor its columns too. */
     internal fun headerRowScore(cells: List<String>): Int =
         cells.count { classifyHeader(it) != null }
 
-    fun detectMapping(grid: StatementGrid): Mapping {
+    fun detectMapping(grid: StatementGrid, preset: BankPreset? = detectBank(grid)): Mapping {
         var headerRow = -1
         var best = 0
         val limit = minOf(grid.rows.size, 45)
         for (i in 0 until limit) {
             val cells = grid.rows[i]
-            val mapped = cells.map { classifyHeader(it) }
+            val mapped = cells.map { classifyWith(preset, it) }
             val score = mapped.count { it != null }
             val hasDate = mapped.any { it == Col.DATE || it == Col.VALUE_DATE }
             val hasMoney = mapped.any { it == Col.DEBIT || it == Col.CREDIT || it == Col.AMOUNT }
@@ -170,7 +290,7 @@ object StatementParse {
             var balanceSeen = false
             var amountSeen = false
             grid.rows[headerRow].forEachIndexed { index, cell ->
-                var col = classifyHeader(cell) ?: return@forEachIndexed
+                var col = classifyWith(preset, cell) ?: return@forEachIndexed
                 // Duplicates: the first of a kind wins; a second date column is
                 // the value date, a second money column is noise.
                 when (col) {
@@ -225,18 +345,43 @@ object StatementParse {
         }
         if (bestDate < 0 || bestDateHits < 3) return
         columns[bestDate] = Col.DATE
-        // Rightmost strongly-numeric column is the running balance; other numeric
-        // columns are amounts; the longest text column is the narration.
-        val numericCols = (0 until width).filter {
+        // Telling money from codes without a header. A branch code or serial
+        // (the Axis SOL failure) is numeric in every row but near-constant and
+        // written as a bare integer; money wanders, and even when it doesn't
+        // (a fixed daily payment) banks print it with paise — "100.00", never
+        // "763". The BALANCE must always be a wandering column.
+        val distinct = Array(width) { HashSet<String>() }
+        val decimalHits = IntArray(width)
+        for (row in sample) {
+            for (c in 0 until width) {
+                val cell = row.getOrNull(c)?.trim().orEmpty()
+                if (cell.isNotEmpty() && parseAmount(cell) != null) {
+                    distinct[c].add(cell)
+                    if ('.' in cell) decimalHits[c]++
+                }
+            }
+        }
+        fun nearConstant(c: Int): Boolean =
+            numericHits[c] >= 5 && distinct[c].size <= (numericHits[c] / 4).coerceAtLeast(2)
+
+        fun codeLike(c: Int): Boolean =
+            nearConstant(c) && decimalHits[c] * 2 < numericHits[c]
+
+        val numericAll = (0 until width).filter {
             it != bestDate && nonEmpty[it] > 0 && numericHits[it] * 10 >= nonEmpty[it] * 6
         }
-        numericCols.lastOrNull()?.let { columns[it] = Col.BALANCE }
-        numericCols.dropLast(1).forEach { columns[it] = Col.AMOUNT }
-        if (numericCols.size >= 3) {
-            // Three or more numeric columns: the classic debit/credit/balance trio.
-            columns[numericCols[numericCols.size - 3]] = Col.DEBIT
-            columns[numericCols[numericCols.size - 2]] = Col.CREDIT
+        val balanceCol = numericAll.lastOrNull { !nearConstant(it) }
+        balanceCol?.let { columns[it] = Col.BALANCE }
+
+        val money = numericAll.filter { it != balanceCol && !codeLike(it) }
+        money.forEach { columns[it] = Col.AMOUNT }
+        if (money.size >= 2) {
+            // Two or more money columns beside the balance: the classic pair.
+            columns[money[money.size - 2]] = Col.DEBIT
+            columns[money[money.size - 1]] = Col.CREDIT
         }
+        numericAll.filter { it != balanceCol && codeLike(it) }.forEach { columns[it] = Col.IGNORE }
+
         (0 until width)
             .filter { it !in columns.keys }
             .maxByOrNull { textLen[it] }
@@ -252,10 +397,23 @@ object StatementParse {
             ?: return true to true
         var sawDayFirst = false
         var sawMonthFirst = false
+        var sawIso = false
         for (i in (headerRow + 1).coerceAtLeast(0) until grid.rows.size) {
             val raw = grid.rows[i].getOrNull(dateCol)?.trim().orEmpty()
+            // A named month ("02-Apr-2026", "2 Apr 2026") cannot be misread in
+            // either order — evidence of unambiguity, same as ISO.
+            if (raw.any { it.isLetter() } && parseDate(raw, dayFirst = true) != null) {
+                sawIso = true
+                continue
+            }
             val parts = raw.split('/', '-', '.').map { it.trim() }
             if (parts.size == 3) {
+                // Year-first (what the spreadsheet readers emit for true date
+                // cells) is unambiguous by construction.
+                if (parts[0].length == 4 && parts[0].toIntOrNull() != null) {
+                    sawIso = true
+                    continue
+                }
                 val a = parts[0].toIntOrNull()
                 val b = parts[1].toIntOrNull()
                 if (a != null && b != null && a <= 31 && b <= 31) {
@@ -267,6 +425,7 @@ object StatementParse {
         return when {
             sawDayFirst && !sawMonthFirst -> true to false
             sawMonthFirst && !sawDayFirst -> false to false
+            sawIso -> true to false       // fully ISO — nothing to toggle
             else -> true to true  // no evidence either way — default Indian, offer the toggle
         }
     }
@@ -587,7 +746,7 @@ object StatementParse {
     // ── The parse ────────────────────────────────────────────────────────────
 
     private val OPENING_BALANCE = Regex("(?i)\\b(b\\s*/\\s*f|brought\\s+forward|opening\\s+balance|balance\\s+b\\s*/?\\s*f|balance\\s+forward)\\b")
-    private val CLOSING_NOISE = Regex("(?i)\\b(closing\\s+balance|total|grand\\s+total|statement\\s+summary|c\\s*/\\s*f|carried\\s+forward|end\\s+of\\s+statement)\\b")
+    private val CLOSING_NOISE = Regex("(?i)\\b(closing\\s+balance|total|grand\\s+total|statement\\s+summary|c\\s*/\\s*f|carried\\s+forward|end\\s+of(\\s+\\w+)?\\s+statement|computer\\s+generated|system\\s+generated)\\b")
 
     fun parse(grid: StatementGrid, mapping: Mapping, extraction: Extraction): ParseOutcome {
         val warnings = ArrayList<String>()

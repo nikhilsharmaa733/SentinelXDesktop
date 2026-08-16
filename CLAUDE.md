@@ -192,6 +192,21 @@ Output is counts and integrity checks only — no field values — so it is safe
   transitive network pull. Do not "simplify" by adding POI or PDFBox.
 - **Dispatch is by content, never extension** (`StatementReader`): banks serve
   HTML and CSV with `.xls` names. Magic bytes decide the reader.
+- **Bank presets + auto-detection** (`StatementParse.BANK_PRESETS`, `detectBank`):
+  the issuer is detected from the FILENAME first (banks name exports
+  distinctively — a letterhead can be a logo image the readers never see), then
+  from preamble text ABOVE the header row only — scanning transaction rows once
+  misdetected an Axis statement as "YES Bank" via a narration. A preset carries
+  per-bank header meanings (Axis's bare `DR/CR/BAL/SOL`); the wizard shows the
+  detection and lets the user override. Verified against real Axis `.xls`
+  (BIFF8, 645 rows, 644/644 balance checks) and IDFC `.xlsx` exports.
+- **`./gradlew verifyStatement --args="/path/statement.xls"`** probes a real
+  file through the engine — format, detected bank, mapping, parse outcome,
+  balance verification — without importing anything. Use it before blaming the
+  engine and after changing it.
+- Content inference must never crown a near-constant numeric column as the
+  BALANCE (the Axis SOL branch-code failure) — integer constants are codes,
+  decimal constants can still be money. Tests pin this.
 - **`narration` is authoritative; the extracted fields are commentary.** Same
   contract as cash-book `amount`/`denominations`: mode/party/reference/remark/
   bank are wizard-chosen labels over the untouched original line.

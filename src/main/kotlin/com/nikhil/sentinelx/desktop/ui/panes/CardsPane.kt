@@ -106,6 +106,7 @@ private fun labelsFor(type: String): List<String> = when (type.uppercase()) {
     "DRIVING LICENCE" -> listOf("FULL NAME", "LICENSE NO.", "VALIDITY", "DATE OF BIRTH", "VEHICLE CLASS", "BLOOD GROUP")
     "VOTER ID" -> listOf("FULL NAME", "EPIC NUMBER", "GENDER", "DATE OF BIRTH", "ASSEMBLY", "CONSTITUENCY")
     "HEALTH CARD" -> listOf("FULL NAME", "ABHA NUMBER", "DATE OF BIRTH", "", "", "")
+    "RC" -> listOf("OWNER NAME", "REGISTRATION NO.", "VEHICLE (MAKER & MODEL)", "REGISTRATION DATE", "VALID UPTO", "CHASSIS NO.")
     else -> listOf("FIELD 1", "FIELD 2", "FIELD 3", "FIELD 4", "FIELD 5", "FIELD 6")
 }
 
@@ -116,6 +117,7 @@ private fun accentForType(type: String): Color = when (type.uppercase()) {
     "PAN" -> AmberWarn
     "DRIVING LICENCE" -> PurpleMystic
     "VOTER ID" -> CyanSoft
+    "RC" -> CyanElectric
     else -> GoldBright
 }
 

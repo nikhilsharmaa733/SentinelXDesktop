@@ -30,19 +30,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nikhil.sentinelx.desktop.core.format.BankBook
 import com.nikhil.sentinelx.desktop.core.format.BankTxnEntity
 import com.nikhil.sentinelx.desktop.core.format.bankBooks
 import com.nikhil.sentinelx.desktop.core.format.businessDateOf
 import com.nikhil.sentinelx.desktop.core.format.displayParty
 import com.nikhil.sentinelx.desktop.core.format.isCredit
 import com.nikhil.sentinelx.desktop.core.format.signedAmount
+import com.nikhil.sentinelx.desktop.core.format.toBusinessDate
 import com.nikhil.sentinelx.desktop.core.format.totalIn
 import com.nikhil.sentinelx.desktop.core.format.totalOut
+import com.nikhil.sentinelx.desktop.core.statement.StatementParse
 import com.nikhil.sentinelx.desktop.ui.AppState
 import com.nikhil.sentinelx.desktop.ui.PanelRequest
 import com.nikhil.sentinelx.desktop.ui.Section
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.theme.*
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -116,6 +120,13 @@ fun BankPane(state: AppState) {
             else "${all.size} TRANSACTIONS · ${books.size} ${if (books.size == 1) "BOOK" else "BOOKS"}"
         ) {
             TransferActions(state, Section.BANK)
+            Spacer(Modifier.width(10.dp))
+            // Manual entry, for the odd transaction no statement covers —
+            // an ATM slip, a passbook-only account, the gap before the next
+            // statement arrives.
+            AddEntryButton {
+                state.panels.open(PanelRequest.BankTxnNew(selectedBook))
+            }
             Spacer(Modifier.width(10.dp))
             // A floating panel like every other editor — draggable, resizable,
             // non-modal, deduplicated on its identity so a second click raises
@@ -294,6 +305,20 @@ private fun FilterChip2(label: String, active: Boolean, tint: Color, onClick: ()
 }
 
 // ── Pieces ───────────────────────────────────────────────────────────────────
+
+@Composable
+fun AddEntryButton(onClick: () -> Unit) {
+    Text(
+        "ADD ENTRY",
+        color = CyanGlow, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(CyanGlow.copy(0.10f))
+            .border(1.dp, CyanGlow.copy(0.4f), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    )
+}
 
 @Composable
 fun ImportStatementButton(onClick: () -> Unit) {
@@ -874,6 +899,145 @@ fun BankTxnEditor(
             onDismiss = { confirmDelete = false }
         )
     }
+}
+
+/**
+ * A hand-typed transaction — the Bank Book's counterpart to a passbook line.
+ *
+ * The description the user types becomes the narration (the authoritative
+ * record, same contract as an imported row), and the fingerprint is computed
+ * from the same fields the statement engine hashes, so a manual entry
+ * deduplicates and merges across devices exactly like an imported one. If a
+ * statement later covers the same day its narration will differ, so the
+ * imported twin arrives as its own row — expected, and the editor says so.
+ */
+@Composable
+fun BankTxnCreate(state: AppState, defaultBook: String?, onClose: () -> Unit) {
+    val books = remember(state.backup.bankTxns) { state.backup.bankTxns.bankBooks() }
+    var book by remember { mutableStateOf(defaultBook ?: books.firstOrNull() ?: "") }
+    var dateText by remember {
+        mutableStateOf(LocalDate.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")))
+    }
+    var amountText by remember { mutableStateOf("") }
+    var isCredit by remember { mutableStateOf(false) }
+    var description by remember { mutableStateOf("") }
+    var party by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("") }
+    var reference by remember { mutableStateOf("") }
+
+    val parsedDate = remember(dateText) { parseManualDate(dateText) }
+    val amount = remember(amountText) {
+        amountText.replace(",", "").trim().toDoubleOrNull()?.takeIf { it > 0 }
+    }
+
+    EditorDialog(
+        title = "New bank entry",
+        canSave = book.isNotBlank() && parsedDate != null && amount != null && description.isNotBlank(),
+        onSave = {
+            val date = parsedDate!!.toBusinessDate()
+            val narration = description.trim()
+            state.upsertBankTxn(
+                BankTxnEntity(
+                    book = book.trim(),
+                    txnDate = date,
+                    narration = narration,
+                    amount = amount!!,
+                    direction = if (isCredit) BankBook.CREDIT else BankBook.DEBIT,
+                    balance = null,
+                    reference = reference.trim().ifEmpty { null },
+                    party = party.trim().ifEmpty { null },
+                    category = category.trim().ifEmpty { BankBook.CAT_OTHER },
+                    fingerprint = StatementParse.fingerprintOf(
+                        date, amount, isCredit, reference.trim().ifEmpty { null }, narration, null
+                    )
+                )
+            )
+            onClose()
+        },
+        onCancel = onClose,
+        width = 560
+    ) {
+        // Direction first — it decides the colour of everything below.
+        Row(Modifier.padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(false to "MONEY OUT", true to "MONEY IN").forEach { (credit, label) ->
+                val tone = if (credit) IncomeGreen else ExpenseRed
+                val active = isCredit == credit
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (active) tone.copy(0.16f) else SurfaceStone)
+                        .border(1.dp, if (active) tone.copy(0.6f) else GoldDark.copy(0.25f), RoundedCornerShape(10.dp))
+                        .clickable { isCredit = credit }
+                        .padding(horizontal = 16.dp, vertical = 9.dp)
+                ) {
+                    Text(label, color = if (active) tone else TextSubtle,
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.weight(1f)) {
+                EditorField(amountText, { amountText = it }, "Amount",
+                    placeholder = "0.00", accent = if (isCredit) IncomeGreen else ExpenseRed)
+            }
+            Box(Modifier.weight(1f)) {
+                EditorField(dateText, { dateText = it }, "Date", placeholder = "dd/MM/yyyy")
+            }
+        }
+        if (dateText.isNotBlank() && parsedDate == null) {
+            Text("Date must be dd/MM/yyyy.", color = ExpenseRed, fontSize = 10.sp,
+                modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        EditorField(description, { description = it }, "Description",
+            placeholder = "What this was — becomes the narration")
+
+        // Book: type a new one or tap an existing.
+        EditorField(book, { book = it }, "Book", placeholder = "HDFC ••1234")
+        if (books.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 12.dp).horizontalScroll(rememberScrollState())
+            ) {
+                books.filter { !it.equals(book.trim(), true) }.take(6).forEach { name ->
+                    Box(
+                        Modifier.padding(end = 6.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(CyanGlow.copy(0.10f))
+                            .clickable { book = name }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) { Text(name, color = CyanGlow, fontSize = 11.sp, maxLines = 1) }
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.weight(1f)) {
+                EditorField(party, { party = it }, "Payee / Party", placeholder = "Optional")
+            }
+            Box(Modifier.weight(1f)) {
+                EditorField(category, { category = it }, "Category", placeholder = "Food, Travel…")
+            }
+        }
+        EditorField(reference, { reference = it }, "Reference / UTR", accent = CyanGlow, placeholder = "Optional")
+
+        Text(
+            "If a statement import later covers this day, the imported line arrives as its " +
+                "own row — keep whichever reads better and delete the other.",
+            color = TextMuted, fontSize = 10.sp, lineHeight = 15.sp
+        )
+        Spacer(Modifier.height(6.dp))
+    }
+}
+
+private fun parseManualDate(text: String): LocalDate? {
+    val t = text.trim()
+    for (pattern in listOf("d/M/uuuu", "d-M-uuuu", "d.M.uuuu")) {
+        runCatching {
+            return LocalDate.parse(t, DateTimeFormatter.ofPattern(pattern))
+        }
+    }
+    return null
 }
 
 @Composable

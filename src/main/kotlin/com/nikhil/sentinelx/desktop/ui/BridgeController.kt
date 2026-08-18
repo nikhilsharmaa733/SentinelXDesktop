@@ -67,14 +67,23 @@ class BridgeCaptureRequest(
  *
  * Requests are **queued**, not single-slotted: two tabs asking at once both
  * get their dialog, one after the other, and neither overwrites the other's
- * pending state. The server runs only while the vault is unlocked and the
- * toggle is on; locking or disabling tears the socket down and denies
- * everything still queued.
+ * pending state.
+ *
+ * The socket runs whenever the toggle is on — **including while the vault is
+ * locked**, where it answers hello with `locked: true` and refuses everything
+ * else. Serving the lock state costs nothing (the socket is user-private and
+ * no vault data flows before unlock — [isLocked] gates every handler), and it
+ * is what lets the extension say "unlock SentinelX" instead of the misleading
+ * "app not reachable" that used to cover app-closed, bridge-off and
+ * vault-locked alike. Locking still denies everything queued; only disabling
+ * the toggle (or quitting) tears the socket down.
  */
 class BridgeController(
     private val loginsProvider: () -> List<LoginEntity>,
     private val onCaptureConfirmed: (LoginEntity) -> Boolean,
-    private val appVersion: String = "1.5.0"
+    /** True while the vault is open. Consulted per request, never cached. */
+    private val unlockedProvider: () -> Boolean = { true },
+    private val appVersion: String = "dev"
 ) : BridgeHandler {
 
     var enabled by mutableStateOf(false)
@@ -95,20 +104,24 @@ class BridgeController(
     val pendingCapture: BridgeCaptureRequest? get() = pendingCaptures.firstOrNull()
 
     private var server: BridgeServer? = null
+    private var shutdownHook: Thread? = null
     private val queueLock = Any()
 
-    /** Turn the bridge on/off. Persisted by the caller; only runs while unlocked. */
-    fun setEnabled(value: Boolean, unlocked: Boolean) {
+    /** Turn the bridge on/off. Persisted by the caller; runs even while locked. */
+    fun applyEnabled(value: Boolean) {
         enabled = value
-        if (value && unlocked) start() else stop()
+        if (value) start() else stop()
     }
 
-    /** Called on unlock: start iff the user had it enabled. */
+    /** Called on unlock: make sure the socket is up if the user had it enabled. */
     fun onUnlocked() { if (enabled) start() }
 
-    /** Called on lock: always tear down, but remember the preference. */
+    /**
+     * Called on lock: the socket stays up (it now serves only the lock state),
+     * but everything mid-flight is denied — an approval dialog must not survive
+     * the vault sealing under it.
+     */
     fun onLocked() {
-        stop()
         synchronized(queueLock) {
             pendingFills.forEach { it.deny() }
             pendingFills = emptyList()
@@ -123,6 +136,14 @@ class BridgeController(
         runCatching { srv.start() }
             .onSuccess { server = srv; running = true }
             .onFailure { running = false }
+        // The socket file lives in XDG_RUNTIME_DIR and stop() deletes it; a
+        // plain window-close never called stop(), leaving a stale socket that
+        // the host then reports as "unavailable". One hook, registered once.
+        if (shutdownHook == null) {
+            val hook = Thread({ server?.let { runCatching { it.stop() } } }, "sentinel-bridge-shutdown")
+            runCatching { Runtime.getRuntime().addShutdownHook(hook) }
+                .onSuccess { shutdownHook = hook }
+        }
     }
 
     private fun stop() {
@@ -135,7 +156,13 @@ class BridgeController(
 
     override fun appVersion(): String = appVersion
 
+    override fun isLocked(): Boolean = !unlockedProvider()
+
+    // The server refuses locked requests before they get here; these repeat the
+    // check anyway so no future server change can leak data past a sealed vault.
+
     override fun onQuery(domain: String): List<BridgeProtocol.Candidate> {
+        if (isLocked()) return emptyList()
         if (domain.isBlank()) return emptyList()
         return loginsProvider()
             .filter { BridgeMatcher.matches(it.siteName, domain, "") }
@@ -144,6 +171,7 @@ class BridgeController(
     }
 
     override fun onFill(candidateId: Int, domain: String): Pair<String, String>? {
+        if (isLocked()) return null
         val login = loginsProvider().firstOrNull { it.id == candidateId } ?: return null
         // Re-check the match: a stale reqId must not fill a login onto a page it
         // does not belong to.
@@ -159,6 +187,7 @@ class BridgeController(
     }
 
     override fun onCapture(domain: String, username: String, password: String): String? {
+        if (isLocked()) return null
         if (password.isBlank()) return null
         val existing = loginsProvider()
         val suggested = BridgeMatcher.suggestedSiteName(domain, "", null)

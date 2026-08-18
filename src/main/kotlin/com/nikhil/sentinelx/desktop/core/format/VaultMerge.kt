@@ -26,6 +26,7 @@ package com.nikhil.sentinelx.desktop.core.format
  * | Ledger       | account + `title` + `amount` + `timestamp` |
  * | Cash Book    | date + slot + direction + amount + text    |
  * | Bank Book    | `book` + `fingerprint`                     |
+ * | Bills        | type + provider + due date + amount + ref  |
  *
  * Using anything else would let the merge emit a list the database then silently
  * collapses: every `@Insert` in this project is `OnConflictStrategy.REPLACE`, so a
@@ -152,6 +153,7 @@ object VaultMerge {
                 accounts = pick(carried, VaultSection.LEDGER, incoming.accounts, current.accounts),
                 cashBook = pick(carried, VaultSection.CASHBOOK, incoming.cashBook, current.cashBook),
                 bankTxns = pick(carried, VaultSection.BANK, incoming.bankTxns, current.bankTxns),
+                bills = pick(carried, VaultSection.BILLS, incoming.bills, current.bills),
                 sections = null,
                 timestamp = System.currentTimeMillis()
             ),
@@ -251,6 +253,26 @@ object VaultMerge {
             ).also { stats += it.stats }.merged
         } else current.bankTxns
 
+        val bills = if (VaultSection.BILLS in carried) {
+            reconcile(
+                VaultSection.BILLS, current.bills, incoming.bills, policy,
+                identity = {
+                    join(norm(it.billType), norm(it.provider), it.dueDate, it.amount, norm(it.refNo ?: ""))
+                },
+                fingerprint = {
+                    join(
+                        it.billType, it.provider, it.refNo, it.amount, it.dueDate,
+                        it.status, it.paidDate, it.billImageUris, it.notes
+                    )
+                },
+                // `bills` carries no unique index — two identical bills are legitimate
+                // (two SIMs on the same plan, due the same day) — so a kept-both entry
+                // goes in untouched, the cash book's convention.
+                rename = { bill, _ -> bill },
+                unique = false
+            ).also { stats += it.stats }.merged
+        } else current.bills
+
         val ledger = if (VaultSection.LEDGER in carried) {
             mergeLedger(current, incoming, policy).also { stats += it.stats }
         } else null
@@ -266,6 +288,7 @@ object VaultMerge {
                 accounts = ledger?.accounts ?: current.accounts,
                 cashBook = cashBook,
                 bankTxns = bankTxns,
+                bills = bills,
                 sections = null,
                 timestamp = System.currentTimeMillis()
             ),

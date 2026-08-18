@@ -225,6 +225,39 @@ Output is counts and integrity checks only — no field values — so it is safe
 - The imported statement file itself stays on disk, plaintext — the DONE step
   says so and suggests deleting it. The importer never writes plaintext out.
 
+## Bills, OTP logins, RC cards, manual bank entries (post-1.6.0)
+
+- **Bills** (`BillEntity` + `Bills` vocab in `core/format/MasterBackup.kt`,
+  `panes/BillsPane.kt`): electricity / Wi-Fi / phone / gas / water / rent / TV / other,
+  one record per billing cycle — due date + paid tracking + the photographed bill.
+  Wire-mirrored on the phone (`data/BillEntity.kt`, Room v11). **No unique index,
+  deliberately** — two identical bills are legitimate (two SIMs, same plan, same due
+  date); the merge identity is the content tuple (type+provider+dueDate+amount+ref),
+  the cash book's convention, `unique = false` in both `VaultMerge` copies.
+  `MasterBackup.bills` is additive — archive version did NOT move. `VaultSection.BILLS`
+  scopes per-screen transfers; bill photos ride `referencedImages()`. Deliberately NOT
+  fed into Ledger/Wealth Vision (the cash-book double-count rule).
+- **OTP-only logins**: `LoginEntity.isOtpOnly` (additive wire field; Room v11 column
+  with `@ColumnInfo(defaultValue = "0")` — that annotation is load-bearing, Room
+  validates migrated columns' defaults). Password stored empty; `PasswordAudit` skips
+  the record; the bridge/autofill fill the username only (never write "" into a
+  password field the user may have typed in).
+- **RC (vehicle registration)** is a card type on both apps:
+  `OWNER NAME / REGISTRATION NO. / VEHICLE (MAKER & MODEL) / REGISTRATION DATE /
+  VALID UPTO / CHASSIS NO.` — caption maps live in `panes/ArtifactEditor.kt` +
+  `panes/CardsPane.kt` here and `AddArtifactScreen.idRunes` +
+  `ArtifactDetailScreen.idHeaders` on the phone; keep all four aligned.
+  `ExpiryScan` reads RC's `label5` (VALID UPTO).
+- **The desktop card editor is the phone's smart form now** — BANK|IDENTITY toggle,
+  type chips, gender/blood-group chips, dd/MM/yyyy hints, and **suggestion chips**
+  (DOB, names, father's name, bank names) harvested from the vault's own artifacts;
+  the phone offers the same KNOWN DOB chips. Don't regress it to six flat fields.
+- **Manual bank entries** (`BankTxnCreate` here, `BankTxnCreateDialog` on the phone):
+  the typed description becomes the narration, and the fingerprint comes from the SAME
+  `StatementParse.fingerprintOf` an import uses, so manual rows dedupe and merge like
+  imported ones. A later statement covering the same day arrives as its own row
+  (different narration) — the editors say so.
+
 ## Browser bridge — trust model mirrors the phone
 
 The desktop has no OS autofill framework, so filling in a browser goes through a
@@ -245,9 +278,22 @@ app**. The trust model is deliberately the phone's, translated:
   `upsertLogin` on the app thread, never from the worker; a duplicate `(site, username)`
   is called out as a REPLACE and reuses the row id.
 - **The socket is user-private, never networked.** `BridgeServer` binds an `AF_UNIX`
-  socket `0600` inside a `0700` dir in `$XDG_RUNTIME_DIR`, runs only between unlock and
-  lock, and deletes the socket on stop. The password never appears in a query or a match
-  — only in a `secret` reply after approval.
+  socket `0600` inside a `0700` dir in `$XDG_RUNTIME_DIR` and deletes the socket on
+  stop. The password never appears in a query or a match — only in a `secret` reply
+  after approval.
+- **The socket runs whenever the toggle is on — INCLUDING while the vault is locked.**
+  While locked, `hello` answers `locked: true` and every data-bearing request is refused
+  with reason `"locked"` (`BridgeHandler.isLocked`, enforced in `BridgeServer.handle`
+  AND re-checked in every `BridgeController` handler). This is what lets the extension
+  popup say "Vault is locked — unlock SentinelX" instead of the old "App not reachable",
+  which misleadingly covered app-closed, bridge-off and vault-locked alike — the exact
+  confusion a real user hit in Brave. The on/off preference lives twice: the encrypted
+  sidecar (authority, travels with the vault) and a plaintext one-word marker
+  `bridge.enabled` beside the vault, which is what lets the socket come up at app launch
+  before anything can read a sidecar. A JVM shutdown hook stops the server on quit so a
+  window-close no longer leaves a stale socket file behind. Extension is v1.1.0
+  (three-state popup); `hello_ok` carries the app version via
+  `System.getProperty("jpackage.app-version")` — never hardcode it again.
 - **Messages are handled on a pool, replies write-locked per connection, and
   pending requests are QUEUES.** A browser multiplexes every tab over one
   native port = one connection; if the reader handled inline, one unanswered
@@ -291,7 +337,7 @@ leave `upgradeUuid` alone), commit, then push a `v*` tag — the tag is what tri
 
     git tag v1.0.5 && git push origin v1.0.5
 
-`workflow_dispatch` runs a test build (artifacts only, no release). Current release: **v1.6.0** (Bank Book).
+`workflow_dispatch` runs a test build (artifacts only, no release). Current release: **v1.6.0** (Bank Book). Unreleased on main: Bills, OTP-only logins, RC cards, smart card editor, manual bank entries, bridge locked-mode — next tag v1.7.0 (bump `version` + `packageVersion` together).
 
 **A push is not a release.** Pushing `main` only moves the code; the CI is triggered by the
 **tag**, and nothing is built or published without one. If a "release" appears to have gone

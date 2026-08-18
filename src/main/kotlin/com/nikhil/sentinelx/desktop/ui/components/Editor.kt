@@ -280,6 +280,7 @@ fun EditorField(
     singleLine: Boolean = true,
     minLines: Int = 1,
     accent: Color = GoldTarnished,
+    enabled: Boolean = true,
     trailing: @Composable (() -> Unit)? = null
 ) {
     Column(modifier.fillMaxWidth().padding(bottom = 12.dp)) {
@@ -295,6 +296,7 @@ fun EditorField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
+            enabled = enabled,
             singleLine = singleLine,
             minLines = minLines,
             shape = RoundedCornerShape(11.dp),
@@ -308,7 +310,10 @@ fun EditorField(
                 unfocusedTextColor = TextParchment,
                 cursorColor = CyanGlow,
                 focusedContainerColor = SurfaceGem,
-                unfocusedContainerColor = SurfaceStone
+                unfocusedContainerColor = SurfaceStone,
+                disabledTextColor = TextMuted,
+                disabledBorderColor = GoldDark.copy(0.12f),
+                disabledContainerColor = SurfaceStone.copy(0.5f)
             )
         )
     }

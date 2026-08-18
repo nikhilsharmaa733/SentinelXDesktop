@@ -47,6 +47,7 @@ fun LoginEditor(
     var site by remember { mutableStateOf(existing?.siteName ?: prefillSite ?: "") }
     var user by remember { mutableStateOf(existing?.username ?: "") }
     var password by remember { mutableStateOf(existing?.password ?: "") }
+    var otpOnly by remember { mutableStateOf(existing?.isOtpOnly ?: false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     var length by remember { mutableStateOf(20) }
@@ -59,7 +60,7 @@ fun LoginEditor(
 
     EditorDialog(
         title = if (existing == null) "New Login" else "Edit Login",
-        canSave = site.isNotBlank() && password.isNotBlank(),
+        canSave = site.isNotBlank() && (otpOnly || password.isNotBlank()),
         onSave = {
             state.upsertLogin(
                 LoginEntity(
@@ -68,7 +69,10 @@ fun LoginEditor(
                     // names so "github" and "GitHub" don't become two entries.
                     siteName = site.trim().lowercase().replaceFirstChar { it.uppercase() },
                     username = user.trim(),
-                    password = password
+                    // An OTP-only account stores no password, whatever the greyed
+                    // field still shows — the checkbox is the statement of intent.
+                    password = if (otpOnly) "" else password,
+                    isOtpOnly = otpOnly
                 )
             )
             onClose()
@@ -146,11 +150,32 @@ fun LoginEditor(
         }
         EditorField(user, { user = it }, "Username", placeholder = "you@example.com")
 
+        // Some accounts sign in with a one-time code and simply have no password.
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(9.dp))
+                .clickable { otpOnly = !otpOnly }
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                .padding(bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier.size(16.dp).clip(RoundedCornerShape(4.dp))
+                    .background(if (otpOnly) CyanGlow else SurfaceElevated),
+                contentAlignment = Alignment.Center
+            ) {
+                if (otpOnly) Text("✓", color = BackgroundVoid, fontSize = 11.sp, fontWeight = FontWeight.Black)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("Logs in with OTP — no password", color = if (otpOnly) CyanGlow else TextSubtle, fontSize = 12.sp)
+        }
+
         EditorField(
             value = password,
             onValueChange = { password = it },
             label = "Password",
-            accent = CyanGlow,
+            accent = if (otpOnly) TextMuted else CyanGlow,
+            enabled = !otpOnly,
             trailing = {
                 Row {
                     IconButton(onClick = {
@@ -170,7 +195,7 @@ fun LoginEditor(
         )
 
         // Generator controls
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
+        if (!otpOnly) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
             Text("LENGTH $length", color = TextMuted, fontSize = 9.sp, letterSpacing = 1.sp)
             Spacer(Modifier.width(10.dp))
             Slider(
@@ -201,7 +226,7 @@ fun LoginEditor(
         }
 
         // Live strength feedback
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+        if (!otpOnly) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
             val tone = when (strength) {
                 Strength.NONE -> TextMuted
                 Strength.WEAK -> ExpenseRed
@@ -221,7 +246,7 @@ fun LoginEditor(
         }
 
         // Warn about reuse at the moment of creation, not weeks later in an audit.
-        if (duplicate.isNotEmpty()) {
+        if (duplicate.isNotEmpty() && !otpOnly) {
             Text(
                 "⚠ Already used for ${duplicate.joinToString(", ") { it.siteName }}",
                 color = ExpenseRed,

@@ -48,10 +48,13 @@ object BridgeProtocol {
         addProperty("v", PROTOCOL_VERSION)
     }
 
-    fun helloOk(reqId: String, appVersion: String): String =
+    fun helloOk(reqId: String, appVersion: String, locked: Boolean = false): String =
         envelope(TYPE_HELLO_OK, reqId).apply {
             addProperty("app", "SentinelX")
             addProperty("version", appVersion)
+            // Lets the extension popup tell "vault is locked" apart from "app is
+            // not running" — the two used to collapse into one misleading error.
+            addProperty("locked", locked)
         }.toString()
 
     fun matches(reqId: String, candidates: List<Candidate>): String =

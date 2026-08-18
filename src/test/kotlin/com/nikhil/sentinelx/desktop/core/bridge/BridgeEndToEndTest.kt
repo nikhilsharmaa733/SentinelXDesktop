@@ -28,7 +28,9 @@ class BridgeEndToEndTest {
 
     private class StubHandler : BridgeHandler {
         var lastFillDomain: String? = null
+        var locked = false
         override fun appVersion() = "test"
+        override fun isLocked() = locked
         override fun onQuery(domain: String) =
             if (BridgeMatcher.domainCore(domain) == "netflix")
                 listOf(BridgeProtocol.Candidate(7, "Netflix", "ray@example.com"))
@@ -97,6 +99,63 @@ class BridgeEndToEndTest {
                     assertEquals("secret", secret.get("type").asString)
                     assertEquals("s3cret", secret.get("password").asString)
                     assertEquals("www.netflix.com", handler.lastFillDomain)
+                }
+            }
+            process.waitFor()
+        } finally {
+            server.stop()
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `locked vault answers hello honestly and refuses everything else`() {
+        val py = python() ?: run {
+            println("python3 not found — skipping bridge locked-mode test")
+            return
+        }
+
+        val dir = createTempDirectory("bridge-locked").toFile()
+        val socket = File(dir, "bridge.sock")
+        val hostScript = File(dir, "sentinelx_host.py")
+        BridgeEndToEndTest::class.java.getResourceAsStream("/bridge/sentinelx_host.py")!!
+            .use { it.copyTo(hostScript.outputStream()) }
+
+        val handler = StubHandler().apply { locked = true }
+        val server = BridgeServer(socket, handler)
+        server.start()
+        try {
+            val process = ProcessBuilder(py, hostScript.absolutePath)
+                .also { it.environment()["SENTINELX_BRIDGE_SOCKET"] = socket.absolutePath }
+                .start()
+
+            process.outputStream.use { stdin ->
+                process.inputStream.use { stdout ->
+                    // hello still answers — with the locked flag the popup renders.
+                    writeFrame(stdin, """{"type":"hello","reqId":"1"}""")
+                    val hello = JsonParser.parseString(readFrame(stdout)).asJsonObject
+                    assertEquals("hello_ok", hello.get("type").asString)
+                    assertTrue(hello.get("locked").asBoolean, "hello must carry locked=true")
+
+                    // Data-bearing requests are refused with reason "locked",
+                    // and the handler is never consulted.
+                    writeFrame(stdin, """{"type":"query","reqId":"2","domain":"www.netflix.com"}""")
+                    val q = JsonParser.parseString(readFrame(stdout)).asJsonObject
+                    assertEquals("error", q.get("type").asString)
+                    assertEquals("locked", q.get("reason").asString)
+
+                    writeFrame(stdin, """{"type":"fill","reqId":"3","id":7,"domain":"www.netflix.com"}""")
+                    val f = JsonParser.parseString(readFrame(stdout)).asJsonObject
+                    assertEquals("error", f.get("type").asString)
+                    assertEquals("locked", f.get("reason").asString)
+                    assertEquals(null, handler.lastFillDomain, "locked fill must not reach the handler")
+
+                    // Unlocking mid-connection restores service on the same socket.
+                    handler.locked = false
+                    writeFrame(stdin, """{"type":"query","reqId":"4","domain":"www.netflix.com"}""")
+                    val ok = JsonParser.parseString(readFrame(stdout)).asJsonObject
+                    assertEquals("matches", ok.get("type").asString)
+                    assertEquals(1, ok.getAsJsonArray("candidates").size())
                 }
             }
             process.waitFor()

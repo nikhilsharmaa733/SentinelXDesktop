@@ -25,6 +25,14 @@ interface BridgeHandler {
     /** Blocks for user confirmation. True only if the user sealed it. */
     fun onCapture(domain: String, username: String, password: String): String?
     fun appVersion(): String
+
+    /**
+     * True while the vault is sealed. The server then answers hello honestly
+     * (`locked: true`) and refuses everything else with reason "locked" —
+     * without this the extension cannot distinguish "app closed" from "vault
+     * locked" and shows a misleading "switch the bridge on" for both.
+     */
+    fun isLocked(): Boolean = false
 }
 
 /**
@@ -129,9 +137,14 @@ class BridgeServer(
     private fun handle(line: String): String? {
         val msg: JsonObject = BridgeProtocol.parse(line)
         val reqId = BridgeProtocol.idOf(msg)
+        // One gate for every data-bearing request. hello still answers so the
+        // popup can say "unlock SentinelX" instead of "app not reachable".
+        if (handler.isLocked() && BridgeProtocol.typeOf(msg) != BridgeProtocol.TYPE_HELLO) {
+            return BridgeProtocol.error(reqId, "locked")
+        }
         return when (BridgeProtocol.typeOf(msg)) {
             BridgeProtocol.TYPE_HELLO ->
-                BridgeProtocol.helloOk(reqId, handler.appVersion())
+                BridgeProtocol.helloOk(reqId, handler.appVersion(), handler.isLocked())
 
             BridgeProtocol.TYPE_QUERY -> {
                 val domain = BridgeProtocol.str(msg, "domain").orEmpty()

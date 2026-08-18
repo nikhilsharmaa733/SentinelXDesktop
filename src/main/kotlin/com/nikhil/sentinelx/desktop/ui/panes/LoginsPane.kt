@@ -307,6 +307,16 @@ private fun AccountCard(
 
         Spacer(Modifier.height(16.dp))
 
+        if (login.isOtpOnly) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Pill("OTP LOGIN", CyanGlow)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Signs in with a one-time code — no password stored.",
+                    color = TextSubtle, fontSize = 11.sp
+                )
+            }
+        } else {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("PASSWORD", color = CyanGlow, fontSize = 8.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
@@ -327,6 +337,7 @@ private fun AccountCard(
                 )
             }
             CopyButton(login.password, "password", CyanGlow)
+        }
         }
 
         if (sharedWith.isNotEmpty()) {

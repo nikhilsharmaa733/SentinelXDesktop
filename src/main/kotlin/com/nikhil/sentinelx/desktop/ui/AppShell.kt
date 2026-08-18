@@ -38,6 +38,7 @@ import com.nikhil.sentinelx.desktop.core.audit.ExpiryScan
 import com.nikhil.sentinelx.desktop.core.audit.PasswordAudit
 import com.nikhil.sentinelx.desktop.ui.components.*
 import com.nikhil.sentinelx.desktop.ui.panes.BankPane
+import com.nikhil.sentinelx.desktop.ui.panes.BillsPane
 import com.nikhil.sentinelx.desktop.ui.panes.CardsPane
 import com.nikhil.sentinelx.desktop.ui.panes.CashBookPane
 import com.nikhil.sentinelx.desktop.ui.panes.ChroniclesPane
@@ -98,6 +99,7 @@ fun AppShell(state: AppState) {
                     Section.LEDGER -> LedgerPane(state)
                     Section.CASHBOOK -> CashBookPane(state)
                     Section.BANK -> BankPane(state)
+                    Section.BILLS -> BillsPane(state)
                 }
                 }
                 }
@@ -208,6 +210,7 @@ private fun Section.countIn(state: AppState): Int? = when (this) {
     // can't say which of the two it is — that one gets a labelled chip in the pane.
     Section.CASHBOOK -> state.backup.cashBook.size
     Section.BANK -> state.backup.bankTxns.size
+    Section.BILLS -> state.backup.bills.size
 }
 
 @Composable
@@ -490,9 +493,10 @@ private fun BrowserBridgeCard(state: AppState) {
 
         Spacer(Modifier.height(10.dp))
         Text(
-            "Fill sealed logins into your browser and capture new ones back. Runs only " +
-                "while the vault is open, over a local socket — never a network port. Every " +
-                "fill asks for your approval here first.",
+            "Fill sealed logins into your browser and capture new ones back — over a " +
+                "local socket, never a network port. While the vault is locked the browser " +
+                "only learns “locked”; passwords move only after you approve each " +
+                "fill here, with the vault open.",
             color = TextSubtle, fontSize = 12.sp, lineHeight = 17.sp
         )
 

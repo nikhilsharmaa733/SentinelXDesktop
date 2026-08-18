@@ -58,11 +58,14 @@ object PasswordAudit {
      * than reported as reused with each other, which would be noise.
      */
     fun run(logins: List<LoginEntity>): List<AuditFinding> {
-        val byPassword = logins
+        // OTP-only accounts have no password by design — auditing their empty
+        // string as WEAK (or as reused with each other) would be pure noise.
+        val auditable = logins.filterNot { it.isOtpOnly }
+        val byPassword = auditable
             .filter { it.password.isNotBlank() }
             .groupBy { it.password }
 
-        return logins.mapNotNull { login ->
+        return auditable.mapNotNull { login ->
             val issues = mutableListOf<Issue>()
 
             val sharing = byPassword[login.password]

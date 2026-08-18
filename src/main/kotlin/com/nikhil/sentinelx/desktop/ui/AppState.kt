@@ -7,6 +7,8 @@ import androidx.compose.runtime.setValue
 import com.nikhil.sentinelx.desktop.core.format.AccountEntity
 import com.nikhil.sentinelx.desktop.core.format.ArtifactEntity
 import com.nikhil.sentinelx.desktop.core.format.BankTxnEntity
+import com.nikhil.sentinelx.desktop.core.format.BillEntity
+import com.nikhil.sentinelx.desktop.core.format.Bills
 import com.nikhil.sentinelx.desktop.core.format.CashEntryEntity
 import com.nikhil.sentinelx.desktop.core.format.CheckItem
 import com.nikhil.sentinelx.desktop.core.format.ChronicleEntity
@@ -26,6 +28,7 @@ import com.nikhil.sentinelx.desktop.core.format.itemsToText
 import com.nikhil.sentinelx.desktop.core.format.newFolderSalt
 import com.nikhil.sentinelx.desktop.core.format.referencedImages
 import com.nikhil.sentinelx.desktop.core.format.scopedTo
+import com.nikhil.sentinelx.desktop.core.format.todayBusinessDate
 import com.nikhil.sentinelx.desktop.core.store.LocalCrypto
 import com.nikhil.sentinelx.desktop.core.store.VaultStore
 import java.io.File
@@ -46,7 +49,8 @@ enum class Section(val label: String, val glyph: String, val wire: String?) {
     CHRONICLES("Chronicles", "ᛀ", VaultSection.CHRONICLES),
     LEDGER("Ledger", "ᚢ", VaultSection.LEDGER),
     CASHBOOK("Cash Book", "ᛃ", VaultSection.CASHBOOK),
-    BANK("Bank Book", "ᛒ", VaultSection.BANK)
+    BANK("Bank Book", "ᛒ", VaultSection.BANK),
+    BILLS("Bills", "ᛚ", VaultSection.BILLS)
 }
 
 /**
@@ -84,9 +88,14 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     /**
      * The browser bridge — the desktop counterpart of the phone's autofill
      * service. It reads logins live from [backup] and routes a capture back
-     * through [upsertLogin], so it never holds its own copy of the vault. Its
-     * on/off preference persists in a sidecar (like favourites); the socket
-     * itself runs only between unlock and lock.
+     * through [upsertLogin], so it never holds its own copy of the vault.
+     *
+     * The on/off preference lives twice, deliberately: the encrypted sidecar is
+     * the authority (it travels with the vault), and a plaintext marker beside
+     * the vault mirrors it so the socket can come up at app launch — *before*
+     * anything can read a sidecar. Whether the bridge is enabled is not a
+     * secret (the extension and host manifest already sit on disk in plain
+     * sight); the marker holds one word and nothing from the vault.
      */
     val bridge = BridgeController(
         loginsProvider = { backup.logins },
@@ -99,18 +108,34 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
                 upsertLogin(login)
                 true
             }
-        }
+        },
+        unlockedProvider = { !locked },
+        // jpackage stamps the installed launcher with the package version; a
+        // bare `./gradlew run` has no stamp and reports "dev".
+        appVersion = System.getProperty("jpackage.app-version") ?: "dev"
     )
+
+    init {
+        // The marker lets an enabled bridge answer "vault locked — unlock it"
+        // from the moment the app starts, instead of "not reachable" until the
+        // first unlock. No marker (or "off") keeps the socket down.
+        if (runCatching { bridgeMarkerFile().readText().trim() == "on" }.getOrDefault(false)) {
+            bridge.applyEnabled(true)
+        }
+    }
+
+    private fun bridgeMarkerFile() = File(store.baseDir, "bridge.enabled")
 
     val vaultExists: Boolean get() = store.exists
     val vaultLocation: String get() = VaultStore.defaultDir().path
 
     /** Persist and apply the bridge toggle. */
     fun setBridgeEnabled(value: Boolean) {
-        bridge.setEnabled(value, unlocked = !locked)
+        bridge.applyEnabled(value)
         runCatching {
             session?.writeSidecar("bridge", if (value) "on".toByteArray() else "off".toByteArray())
         }
+        runCatching { bridgeMarkerFile().writeText(if (value) "on" else "off") }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -133,9 +158,10 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
         val on = runCatching {
             session?.readSidecar("bridge")?.toString(Charsets.UTF_8)?.trim() == "on"
         }.getOrDefault(false)
-        // Reflect the stored preference without touching the socket yet — unlock()
-        // starts it right after via bridge.onUnlocked(), so avoid a double start.
-        if (on != bridge.enabled) bridge.setEnabled(on, unlocked = false)
+        // The sidecar is the authority; the plaintext marker follows it. This is
+        // also what creates the marker for vaults from before it existed.
+        if (on != bridge.enabled) bridge.applyEnabled(on)
+        runCatching { bridgeMarkerFile().writeText(if (on) "on" else "off") }
     }
 
     fun create(password: CharArray, seed: MasterBackup = MasterBackup()): Boolean =
@@ -467,6 +493,25 @@ class AppState(private val store: VaultStore = VaultStore(VaultStore.defaultDir(
     }
 
     fun deleteBankTxn(id: Long) = mutate { b -> b.copy(bankTxns = b.bankTxns.filterNot { it.id == id }) }
+
+    fun upsertBill(bill: BillEntity) = mutate { b ->
+        val id = if (bill.id == 0L) nextLongId(b.bills) { it.id } else bill.id
+        val entry = bill.copy(id = id, timestamp = bill.timestamp.orNow())
+        b.copy(bills = b.bills.replacingOrAdding(entry) { it.id == id })
+    }
+
+    fun deleteBill(id: Long) = mutate { b -> b.copy(bills = b.bills.filterNot { it.id == id }) }
+
+    /** Flip paid/unpaid in place — the row's one-tap action. */
+    fun setBillPaid(id: Long, paid: Boolean) = mutate { b ->
+        b.copy(bills = b.bills.map {
+            if (it.id != id) it
+            else it.copy(
+                status = if (paid) Bills.PAID else Bills.UNPAID,
+                paidDate = if (paid) todayBusinessDate() else null
+            )
+        })
+    }
 
     /** Bulk delete as ONE mutation — one save, one undo snapshot. */
     fun deleteBankTxns(ids: Collection<Long>) {

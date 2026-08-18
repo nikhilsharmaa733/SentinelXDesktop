@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SentinelX Bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Fill and capture logins from your local SentinelX vault. Talks only to the SentinelX app on this machine — never to any server.",
   "icons": {
     "48": "icons/icon48.png",

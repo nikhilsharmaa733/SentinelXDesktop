@@ -41,6 +41,13 @@ data class MasterBackup(
      */
     val bankTxns: List<BankTxnEntity> = emptyList(),
     /**
+     * Household bills — electricity, Wi-Fi, phone and the rest — with due dates,
+     * paid tracking and the photographed bill. Additive like [bankTxns]: the
+     * archive version does NOT move, old builds drop the key, and an old
+     * archive reads as an empty bills book.
+     */
+    val bills: List<BillEntity> = emptyList(),
+    /**
      * Note folders — colour, glyph, lock, passcode gate. Travels with the NOTES
      * section (a folder without its notes is a label; its notes without the folder
      * lose their lock). Absent from pre-v9 archives, in which case folders exist only
@@ -80,8 +87,9 @@ object VaultSection {
     const val LEDGER = "LEDGER"
     const val CASHBOOK = "CASHBOOK"
     const val BANK = "BANK"
+    const val BILLS = "BILLS"
 
-    val ALL = listOf(LOGINS, CARDS, NOTES, CHRONICLES, LEDGER, CASHBOOK, BANK)
+    val ALL = listOf(LOGINS, CARDS, NOTES, CHRONICLES, LEDGER, CASHBOOK, BANK, BILLS)
 
     fun label(section: String): String = when (section) {
         LOGINS -> "Logins"
@@ -91,6 +99,7 @@ object VaultSection {
         LEDGER -> "Ledger & Accounts"
         CASHBOOK -> "Cash Book"
         BANK -> "Bank Book"
+        BILLS -> "Bills"
         else -> section
     }
 }
@@ -110,6 +119,7 @@ fun MasterBackup.countIn(section: String): Int = when (section) {
     VaultSection.LEDGER -> ledger.size + accounts.size
     VaultSection.CASHBOOK -> cashBook.size
     VaultSection.BANK -> bankTxns.size
+    VaultSection.BILLS -> bills.size
     else -> 0
 }
 
@@ -128,6 +138,7 @@ fun MasterBackup.scopedTo(wanted: Collection<String>): MasterBackup {
         accounts = if (VaultSection.LEDGER in keep) accounts else emptyList(),
         cashBook = if (VaultSection.CASHBOOK in keep) cashBook else emptyList(),
         bankTxns = if (VaultSection.BANK in keep) bankTxns else emptyList(),
+        bills = if (VaultSection.BILLS in keep) bills else emptyList(),
         noteFolders = if (VaultSection.NOTES in keep) noteFolders else emptyList(),
         sections = if (keep.containsAll(VaultSection.ALL)) null
         else VaultSection.ALL.filter { it in keep },
@@ -139,7 +150,14 @@ data class LoginEntity(
     val id: Int = 0,
     val siteName: String = "",
     val username: String = "",
-    val password: String = ""
+    val password: String = "",
+    /**
+     * True for accounts that sign in with a one-time code instead of a password
+     * (many Indian services are OTP-only). The password stays empty and every
+     * strength/reuse audit skips the record. Additive: absent in old archives,
+     * defaulting false; old builds drop the key harmlessly.
+     */
+    val isOtpOnly: Boolean = false
 )
 
 data class ArtifactEntity(
@@ -253,6 +271,74 @@ data class CashEntryEntity(
     val timestamp: Long = 0L
 )
 
+/**
+ * One household bill — an electricity, Wi-Fi, phone, gas, water, rent or other
+ * recurring bill, one record per billing cycle.
+ *
+ * Follows the cash book's contracts: `dueDate`/`paidDate` are business dates
+ * (UTC midnight, see [normaliseToBusinessDate]), there is **no unique index on
+ * the phone's `bills` table** — two identical bills are legitimate (two SIMs on
+ * the same plan due the same day) and REPLACE would silently merge them — and
+ * the merge identity in `VaultMerge` is the content tuple, mirrored on both apps.
+ */
+data class BillEntity(
+    val id: Long = 0L,
+    /** One of [Bills.TYPES]; free text still renders under the OTHER styling. */
+    val billType: String = Bills.TYPE_OTHER,
+    /** Who the bill is from — "MSEB", "Airtel Fiber", the landlord's name. */
+    val provider: String = "",
+    /** Consumer / account number printed on the bill. */
+    val refNo: String? = null,
+    val amount: Double = 0.0,
+    /** Due date, UTC midnight — the business-date convention. */
+    val dueDate: Long = 0L,
+    /** [Bills.UNPAID] or [Bills.PAID]. */
+    val status: String = Bills.UNPAID,
+    /** When it was actually paid, UTC midnight; null while unpaid. */
+    val paidDate: Long? = null,
+    /** Comma-separated image filenames — same convention as [TransactionEntity.billImageUris]. */
+    val billImageUris: String? = null,
+    val notes: String? = null,
+    val timestamp: Long = 0L
+)
+
+/** The [BillEntity] vocabulary. Persisted strings crossing the `.sxv` boundary — constants, not enums. */
+object Bills {
+    const val TYPE_ELECTRICITY = "ELECTRICITY"
+    const val TYPE_WIFI = "WIFI"
+    const val TYPE_PHONE = "PHONE"
+    const val TYPE_GAS = "GAS"
+    const val TYPE_WATER = "WATER"
+    const val TYPE_RENT = "RENT"
+    const val TYPE_TV = "TV"
+    const val TYPE_OTHER = "OTHER"
+
+    val TYPES = listOf(
+        TYPE_ELECTRICITY, TYPE_WIFI, TYPE_PHONE, TYPE_GAS, TYPE_WATER, TYPE_RENT, TYPE_TV, TYPE_OTHER
+    )
+
+    const val UNPAID = "UNPAID"
+    const val PAID = "PAID"
+
+    fun label(type: String): String = when (type) {
+        TYPE_ELECTRICITY -> "Electricity"
+        TYPE_WIFI -> "Wi-Fi"
+        TYPE_PHONE -> "Phone"
+        TYPE_GAS -> "Gas"
+        TYPE_WATER -> "Water"
+        TYPE_RENT -> "Rent"
+        TYPE_TV -> "TV / DTH"
+        TYPE_OTHER -> "Other"
+        else -> type.lowercase().replaceFirstChar { it.uppercase() }
+    }
+}
+
+fun BillEntity.isPaid(): Boolean = status == Bills.PAID
+
+/** Unpaid and past due. [today] defaults to the current business date. */
+fun BillEntity.isOverdue(today: Long = todayBusinessDate()): Boolean =
+    !isPaid() && dueDate < today
+
 // ── Separator helpers ────────────────────────────────────────────────────────
 // The phone stores image lists as delimited strings inside a single column. Both
 // delimiters can legitimately appear in user text elsewhere, so parsing is kept in
@@ -267,6 +353,9 @@ fun TransactionEntity.billFilenames(): List<String> =
 fun CashEntryEntity.slipFilenames(): List<String> =
     slipImageUris?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
 
+fun BillEntity.billFilenames(): List<String> =
+    billImageUris?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
+
 /** Every image filename this backup references, for integrity checks against the ZIP. */
 fun MasterBackup.referencedImages(): Set<String> = buildSet {
     artifacts.forEach { a ->
@@ -279,6 +368,7 @@ fun MasterBackup.referencedImages(): Set<String> = buildSet {
     }
     ledger.forEach { addAll(it.billFilenames()) }
     cashBook.forEach { addAll(it.slipFilenames()) }
+    bills.forEach { addAll(it.billFilenames()) }
 }
 
 /**

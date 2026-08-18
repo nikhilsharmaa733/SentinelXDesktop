@@ -42,6 +42,9 @@ class VaultStore(private val dir: File) {
 
     val exists: Boolean get() = metaFile.isFile
 
+    /** The store's directory, for callers keeping non-secret markers beside the vault. */
+    val baseDir: File get() = dir
+
     // ── Unlocking ─────────────────────────────────────────────────────────────
 
     /** Creates a brand-new vault. Fails rather than overwriting an existing one. */

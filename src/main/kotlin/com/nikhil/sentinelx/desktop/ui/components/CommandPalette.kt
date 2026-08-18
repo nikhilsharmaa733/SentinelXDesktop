@@ -23,7 +23,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.nikhil.sentinelx.desktop.core.format.MasterBackup
+import com.nikhil.sentinelx.desktop.core.format.Bills
 import com.nikhil.sentinelx.desktop.core.format.businessDateOf
+import com.nikhil.sentinelx.desktop.core.format.isPaid
 import com.nikhil.sentinelx.desktop.core.format.displayGlyph
 import com.nikhil.sentinelx.desktop.core.format.displayParty
 import com.nikhil.sentinelx.desktop.core.format.folderKey
@@ -136,6 +138,22 @@ fun buildIndex(backup: MasterBackup, sealedFolders: Set<String> = emptySet()): L
                 section = Section.BANK,
                 glyph = "ᛒ",
                 accent = if (it.isCredit()) IncomeGreen else ExpenseRed
+            )
+        )
+    }
+    backup.bills.forEach {
+        add(
+            PaletteEntry(
+                title = it.provider.ifBlank { Bills.label(it.billType) },
+                subtitle = listOf(
+                    Bills.label(it.billType),
+                    "₹" + it.amount,
+                    "due " + businessDateOf(it.dueDate).format(paletteDate),
+                    if (it.isPaid()) "paid" else "unpaid"
+                ).filter { part -> part.isNotBlank() }.joinToString(" · "),
+                section = Section.BILLS,
+                glyph = "ᛚ",
+                accent = if (it.isPaid()) IncomeGreen else AmberWarn
             )
         )
     }

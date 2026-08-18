@@ -33,6 +33,8 @@ import com.nikhil.sentinelx.desktop.ui.components.LocalPanelScope
 import com.nikhil.sentinelx.desktop.ui.components.PanelScope
 import com.nikhil.sentinelx.desktop.ui.panes.AccountEditor
 import com.nikhil.sentinelx.desktop.ui.panes.ArtifactEditor
+import com.nikhil.sentinelx.desktop.ui.panes.BankTxnCreate
+import com.nikhil.sentinelx.desktop.ui.panes.BillEditor
 import com.nikhil.sentinelx.desktop.ui.panes.BankTxnEditor
 import com.nikhil.sentinelx.desktop.ui.panes.CashEntryEditor
 import com.nikhil.sentinelx.desktop.ui.panes.ChronicleEditor
@@ -116,6 +118,16 @@ sealed interface PanelRequest {
      * the wizard mid-flow instead of opening a second one that would race the
      * first over the same book.
      */
+    /** Add / edit a bill. Null = new. */
+    data class Bill(val existing: com.nikhil.sentinelx.desktop.core.format.BillEntity?) : PanelRequest {
+        override val identity get() = existing?.let { "bill:${it.id}" } ?: "bill:new"
+    }
+
+    /** A hand-typed bank entry. One at a time — the identity is constant. */
+    data class BankTxnNew(val defaultBook: String?) : PanelRequest {
+        override val identity get() = "bank:new"
+    }
+
     data class StatementImport(val defaultBook: String?) : PanelRequest {
         override val identity get() = "statement-import"
     }
@@ -312,6 +324,12 @@ private fun PanelContent(state: AppState, panel: Panel, onClose: () -> Unit) {
 
         is PanelRequest.BankTxn ->
             BankTxnEditor(state, request.existing, onClose)
+
+        is PanelRequest.BankTxnNew ->
+            BankTxnCreate(state, request.defaultBook, onClose)
+
+        is PanelRequest.Bill ->
+            BillEditor(state, request.existing, onClose)
 
         is PanelRequest.StatementImport ->
             StatementImportWizard(state, request.defaultBook, onClose)

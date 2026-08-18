@@ -25,6 +25,7 @@ object ExpiryScan {
             "BANK" -> artifact.label4              // EXPIRY
             "PASSPORT" -> artifact.label5          // EXPIRY DATE
             "DRIVING LICENCE" -> artifact.label3   // VALIDITY
+            "RC" -> artifact.label5                // VALID UPTO
             else -> null                           // Aadhaar, PAN, Voter ID do not expire
         }?.takeIf { it.isNotBlank() }
 
